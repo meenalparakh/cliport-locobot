@@ -14,12 +14,24 @@ from cliport.utils import utils
 
 import pybullet as p
 
+from airobot.sensor.camera.rgbdcam_pybullet import RGBDCameraPybullet
+from airobot.utils.pb_util import create_pybullet_client
+from yacs.config import CfgNode as CN
+
+# import locobot
+from locobot.sim.locobot import Locobot
+
+import sys
+import random
+from locobot.utils.common import *
+
 PLACE_STEP = 0.0003
 PLACE_DELTA_THRESHOLD = 0.005
 
 UR5_URDF_PATH = 'ur5/ur5.urdf'
-UR5_WORKSPACE_URDF_PATH = 'ur5/workspace.urdf'
+WORKSPACE_URDF_PATH = 'ur5/workspace.urdf'
 PLANE_URDF_PATH = 'plane/plane.urdf'
+LOCOBOT_URDF = 'locobot_description/locobot.urdf'
 
 
 class Environment(gym.Env):
@@ -28,6 +40,9 @@ class Environment(gym.Env):
     def __init__(self,
                  assets_root,
                  task=None,
+                 opengl_render = True,
+                 gui = True,
+                 realtime = False,
                  disp=False,
                  shared_memory=False,
                  hz=240,
@@ -45,6 +60,9 @@ class Environment(gym.Env):
         Raises:
           RuntimeError: if pybullet cannot load fileIOPlugin.
         """
+        self.n_substeps = n_substesps
+        # self.pb_client.setAdditionalSearchPath(locobot.LIB_PATH.joinpath('assets').as_posix())
+
         self.pix_size = 0.003125
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
         self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
@@ -83,33 +101,35 @@ class Environment(gym.Env):
                      gym.spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)))
         })
 
-        # Start PyBullet.
-        disp_option = p.DIRECT
-        if disp:
-            disp_option = p.GUI
-            if shared_memory:
-                disp_option = p.SHARED_MEMORY
-        client = p.connect(disp_option)
-        file_io = p.loadPlugin('fileIOPlugin', physicsClientId=client)
-        if file_io < 0:
-            raise RuntimeError('pybullet: cannot load FileIO!')
-        if file_io >= 0:
-            p.executePluginCommand(
-                file_io,
-                textArgument=assets_root,
-                intArgs=[p.AddFileIOAction],
-                physicsClientId=client)
+        self.pb_client = create_pybullet_client(gui=gui, realtime=realtime, opengl_render=opengl_render)
 
-        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-        p.setPhysicsEngineParameter(enableFileCaching=0)
-        p.setAdditionalSearchPath(assets_root)
-        p.setAdditionalSearchPath(tempfile.gettempdir())
-        p.setTimeStep(1. / hz)
+        # Start PyBullet.
+        # disp_option = p.DIRECT
+        # if disp:
+        #     disp_option = p.GUI
+        #     if shared_memory:
+        #         disp_option = p.SHARED_MEMORY
+        # client = p.connect(disp_option)
+        # file_io = p.loadPlugin('fileIOPlugin', physicsClientId=client)
+        # if file_io < 0:
+        #     raise RuntimeError('pybullet: cannot load FileIO!')
+        # if file_io >= 0:
+        #     p.executePluginCommand(
+        #         file_io,
+        #         textArgument=assets_root,
+        #         intArgs=[p.AddFileIOAction],
+        #         physicsClientId=client)
+
+        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        self.pb_client.setPhysicsEngineParameter(enableFileCaching=0)
+        self.pb_client.setAdditionalSearchPath(assets_root)
+        self.pb_client.setAdditionalSearchPath(tempfile.gettempdir())
+        self.pb_client.setTimeStep(1. / hz)
 
         # If using --disp, move default camera closer to the scene.
         if disp:
-            target = p.getDebugVisualizerCamera()[11]
-            p.resetDebugVisualizerCamera(
+            target = self.pb_client.getDebugVisualizerCamera()[11]
+            self.pb_client.resetDebugVisualizerCamera(
                 cameraDistance=1.1,
                 cameraYaw=90,
                 cameraPitch=-25,
@@ -156,22 +176,31 @@ class Environment(gym.Env):
             raise ValueError('environment task must be set. Call set_task or pass '
                              'the task arg in the environment constructor.')
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
-        p.resetSimulation(p.RESET_USE_DEFORMABLE_WORLD)
-        p.setGravity(0, 0, -9.8)
+
+        self.pb_client.resetSimulation(p.RESET_USE_DEFORMABLE_WORLD)
+        self.pb_client.setGravity(0, 0, -9.8)
 
         # Temporarily disable rendering to load scene faster.
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
 
-        pybullet_utils.load_urdf(p, os.path.join(self.assets_root, PLANE_URDF_PATH),
+        pybullet_utils.load_urdf(self.pb_client, os.path.join(self.assets_root, PLANE_URDF_PATH),
                                  [0, 0, -0.001])
+
         pybullet_utils.load_urdf(
-            p, os.path.join(self.assets_root, UR5_WORKSPACE_URDF_PATH), [0.5, 0, 0])
+            self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.5])
 
         # Load UR5 robot arm equipped with suction end effector.
         # TODO(andyzeng): add back parallel-jaw grippers.
-        self.ur5 = pybullet_utils.load_urdf(
-            p, os.path.join(self.assets_root, UR5_URDF_PATH))
-        self.ee = self.task.ee(self.assets_root, self.ur5, 9, self.obj_ids)
+        # self.ur5 = pybullet_utils.load_urdf(
+        #     p, os.path.join(self.assets_root, UR5_URDF_PATH))
+        self.bot_id = pybullet_utils.load_urdf(
+                        self.pb_client, os.path.join(self.assets_root, LOCOBOT_URDF)
+                        [0, 0, 0.001])
+
+        self.locobot = Locobot(self, self.bot_id)
+        self.locobot.reset()
+
+        self.ee = self.task.ee(self.assets_root, self.locobot, self., self.obj_ids)
         self.ee_tip = 10  # Link ID of suction cup.
 
         # Get revolute joint indices of robot (skip fixed joints).

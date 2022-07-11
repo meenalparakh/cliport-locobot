@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<robot name="cube.urdf">
+  <link name="baseLink">
+    <contact>
+    	<friction_anchor/>
+    	   <lateral_friction value="2.0"/>
+    </contact>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+       <mass value="MASS"/>
+       <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+				<mesh filename="cube.obj" scale="LENGTH WIDTH HEIGHT"/>
+      </geometry>
+       <material name="white">
+        <color rgba="RED GREEN BLUE ALPHA"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+	 	<box size="LENGTH WIDTH HEIGHT"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
