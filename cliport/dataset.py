@@ -10,6 +10,8 @@ from torch.utils.data import Dataset
 from cliport import tasks
 from cliport.tasks import cameras
 from cliport.utils import utils
+import cv2
+import pdb
 
 # See transporter.py, regression.py, dummy.py, task.py, etc.
 PIXEL_SIZE = 0.003125
@@ -39,6 +41,7 @@ class RavensDataset(Dataset):
 
         self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60  # legacy code issue: theta_sigma was newly added
         self.pix_size = 0.003125
+        self.depth_scale = 1000.0
         self.in_shape = (320, 160, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
         self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
@@ -92,11 +95,35 @@ class RavensDataset(Dataset):
             with open(os.path.join(field_path, fname), 'wb') as f:
                 pickle.dump(data, f)
 
-        dump(color, 'color')
-        dump(depth, 'depth')
+        def dump_image(data, field):
+            episode = f'{self.n_episodes:06d}-{seed}'
+            field_path = os.path.join(self._path, field, episode)
+            if not os.path.exists(field_path):
+                os.makedirs(field_path)
+            num_steps = data.shape[0]
+            num_cameras = data.shape[1]
+
+            for step in range(num_steps):
+                for camera in range(num_cameras):
+                    image = data[step, camera]
+                    fname = f'S{step}-C{camera}.png'
+                    if field == 'color':
+                        cv2.imwrite(os.path.join(field_path, fname), image)
+                    elif field == 'depth':
+                        sdepth = image * self.depth_scale
+                        # pdb.set_trace()
+                        # print('depth: ', sdepth)
+                        cv2.imwrite(os.path.join(field_path, fname), sdepth.astype(np.uint16))
+
+
+        dump_image(color, 'color')
+        dump_image(depth, 'depth')
         dump(action, 'action')
         dump(reward, 'reward')
         dump(info, 'info')
+        dump({'num_steps': color.shape[0],
+              'num_cameras': color.shape[1]},
+             'side_info')
 
         self.n_episodes += 1
         self.max_seed = max(self.max_seed, seed)
@@ -106,6 +133,29 @@ class RavensDataset(Dataset):
         self.sample_set = episodes
 
     def load(self, episode_id, images=True, cache=False):
+
+        def load_image_field(episode_id, field, fname):
+
+            # path = os.path.join(self._path, 'side_info')
+            side_info = load_field(episode_id, 'side_info', fname)
+            # pickle.load(open(os.path.join(path, fname), 'rb'))
+            num_steps = side_info['num_steps']
+            num_cameras = side_info['num_cameras']
+
+            dir = os.path.join(self._path, field, fname[:-4])
+            data = [None]*num_steps
+            for step in range(num_steps):
+                data[step] = [None]*num_cameras
+                for cam in range(num_cameras):
+                    f = f'S{step}-C{cam}.png'
+                    image = cv2.imread(os.path.join(dir, f), cv2.IMREAD_UNCHANGED)
+                    if field == 'depth':
+                        image = image / self.depth_scale
+                    data[step][cam] = image
+
+            data = np.array(data)
+            return data
+
         def load_field(episode_id, field, fname):
 
             # Check if sample is in cache.
@@ -118,7 +168,11 @@ class RavensDataset(Dataset):
 
             # Load sample from files.
             path = os.path.join(self._path, field)
-            data = pickle.load(open(os.path.join(path, fname), 'rb'))
+
+            if field == 'color' or field == 'depth':
+                data = load_image_field(episode_id, field, fname)
+            else:
+                data = pickle.load(open(os.path.join(path, fname), 'rb'))
             if cache:
                 self._cache[episode_id][field] = data
             return data
@@ -131,11 +185,11 @@ class RavensDataset(Dataset):
                 seed = int(fname[(fname.find('-') + 1):-4])
 
                 # Load data.
-                color = load_field(episode_id, 'color', fname)
-                depth = load_field(episode_id, 'depth', fname)
                 action = load_field(episode_id, 'action', fname)
                 reward = load_field(episode_id, 'reward', fname)
                 info = load_field(episode_id, 'info', fname)
+                color = load_field(episode_id, 'color', fname)
+                depth = load_field(episode_id, 'depth', fname)
 
                 # Reconstruct episode.
                 episode = []
