@@ -50,51 +50,52 @@ def main(cfg):
 
     env.set_task(task)
     obs = env.reset()
-    while True:
-        env.step_simulation()
+
+    # while True:
+    #     env.step_simulation()
 
     # # Collect training data from oracle demonstrations.
     # while dataset.n_episodes < cfg['n']:
-    #     episode, total_reward = [], 0
-    #     seed += 2
+    episode, total_reward = [], 0
+    seed += 2
 
-    #     # Set seeds.
-    #     np.random.seed(seed)
-    #     random.seed(seed)
+    # Set seeds.
+    np.random.seed(seed)
+    random.seed(seed)
 
-    #     print('Oracle demo: {}/{} | Seed: {}'.format(dataset.n_episodes + 1, cfg['n'], seed))
+    print('Oracle demo: {}/{} | Seed: {}'.format(dataset.n_episodes + 1, cfg['n'], seed))
 
 
-    #     info = env.info
-    #     reward = 0
+    info = env.info
+    reward = 0
 
-    #     # Unlikely, but a safety check to prevent leaks.
-    #     if task.mode == 'val' and seed > (-1 + 10000):
-    #         raise Exception("!!! Seeds for val set will overlap with the test set !!!")
+    # Unlikely, but a safety check to prevent leaks.
+    if task.mode == 'val' and seed > (-1 + 10000):
+        raise Exception("!!! Seeds for val set will overlap with the test set !!!")
 
-    #     # Start video recording (NOTE: super slow)
-    #     if record:
-    #         env.start_rec(f'{dataset.n_episodes+1:06d}')
+    # Start video recording (NOTE: super slow)
+    if record:
+        env.start_rec(f'{dataset.n_episodes+1:06d}')
 
-    #     # Rollout expert policy
-    #     for _ in range(task.max_steps):
-    #         act = agent.act(obs, info)
-    #         episode.append((obs, act, reward, info))
-    #         lang_goal = info['lang_goal']
-    #         obs, reward, done, info = env.step(act)
-    #         total_reward += reward
-    #         print(f'Total Reward: {total_reward:.3f} | Done: {done} | Goal: {lang_goal}')
-    #         if done:
-    #             break
-    #     episode.append((obs, None, reward, info))
+    # Rollout expert policy
+    for _ in range(task.max_steps):
+        act = agent.act(obs, info)
+        episode.append((obs, act, reward, info))
+        lang_goal = info['lang_goal']
+        obs, reward, done, info = env.step(act)
+        total_reward += reward
+        print(f'Total Reward: {total_reward:.3f} | Done: {done} | Goal: {lang_goal}')
+        if done:
+            break
+    episode.append((obs, None, reward, info))
 
-    #     # End video recording
-    #     if record:
-    #         env.end_rec()
+    # End video recording
+    if record:
+        env.end_rec()
 
-    #     # Only save completed demonstrations.
-    #     if save_data and total_reward > 0.99:
-    #         dataset.add(seed, episode)
+    # Only save completed demonstrations.
+    if save_data and total_reward > 0.99:
+        dataset.add(seed, episode)
 
 
 if __name__ == '__main__':

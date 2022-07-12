@@ -247,7 +247,8 @@ class Environment(gym.Env):
         if action is not None:
             timeout = self.task.primitive(self.movej, self.movep,
                                           self.ee, action['pose0'],
-                                          action['pose1'])
+                                          action['pose1'], 
+                                          navigator = self.locobot.move_to_discrete)
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.

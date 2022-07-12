@@ -13,7 +13,7 @@ from cliport.tasks import primitives
 from cliport.tasks.grippers import Suction
 from cliport.utils import utils
 
-import pybullet as p
+# import pybullet as p
 
 
 class Task():
@@ -23,7 +23,7 @@ class Task():
         self.ee = LocobotSuction #Suction
         self.mode = 'train'
         self.sixdof = False
-        self.primitive = primitives.PickPlace()
+        self.primitive = primitives.LocobotPickPlace()
         self.oracle_cams = cameras.Oracle.CONFIG
 
         # Evaluation epsilons (for pose evaluation metric).
@@ -79,7 +79,7 @@ class Task():
                 # Ignore already matched objects.
                 for i in range(len(objs)):
                     object_id, (symmetry, _) = objs[i]
-                    pose = p.getBasePositionAndOrientation(object_id)
+                    pose = env.pb_client.getBasePositionAndOrientation(object_id)
                     targets_i = np.argwhere(matches[i, :]).reshape(-1)
                     for j in targets_i:
                         if self.is_match(pose, targs[j], symmetry):
@@ -91,7 +91,7 @@ class Task():
             nn_targets = []
             for i in range(len(objs)):
                 object_id, (symmetry, _) = objs[i]
-                xyz, _ = p.getBasePositionAndOrientation(object_id)
+                xyz, _ = env.pb_client.getBasePositionAndOrientation(object_id)
                 targets_i = np.argwhere(matches[i, :]).reshape(-1)
                 if len(targets_i) > 0:  # pylint: disable=g-explicit-length-test
                     targets_xyz = np.float32([targs[j][0] for j in targets_i])
@@ -138,7 +138,7 @@ class Task():
 
             # Get placing pose.
             targ_pose = targs[nn_targets[pick_i]]  # pylint: disable=undefined-loop-variable
-            obj_pose = p.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
+            obj_pose = env.pb_client.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
             if not self.sixdof:
                 obj_euler = utils.quatXYZW_to_eulerXYZ(obj_pose[1])
                 obj_quat = utils.eulerXYZ_to_quatXYZW((0, 0, obj_euler[2]))
@@ -181,7 +181,7 @@ class Task():
             step_reward = 0
             for i in range(len(objs)):
                 object_id, (symmetry, _) = objs[i]
-                pose = p.getBasePositionAndOrientation(object_id)
+                pose = env.pb_client.getBasePositionAndOrientation(object_id)
                 targets_i = np.argwhere(matches[i, :]).reshape(-1)
                 for j in targets_i:
                     target_pose = targs[j]
@@ -198,7 +198,7 @@ class Task():
                 # Count valid points in zone.
                 for obj_idx, obj_id in enumerate(obj_pts):
                     pts = obj_pts[obj_id]
-                    obj_pose = p.getBasePositionAndOrientation(obj_id)
+                    obj_pose = env.pb_client.getBasePositionAndOrientation(obj_id)
                     world_to_zone = utils.invert(zone_pose)
                     obj_to_zone = utils.multiply(world_to_zone, obj_pose)
                     pts = np.float32(utils.apply(obj_to_zone, pts))
@@ -363,7 +363,7 @@ class Task():
         return np.vstack((xv.reshape(1, -1), yv.reshape(1, -1), zv.reshape(1, -1)))
 
     def get_mesh_object_points(self, obj):
-        mesh = p.getMeshData(obj)
+        mesh = env.pb_client.getMeshData(obj)
         mesh_points = np.array(mesh[1])
         mesh_dim = np.vstack((mesh_points.min(axis=0), mesh_points.max(axis=0)))
         xv, yv, zv = np.meshgrid(
@@ -376,7 +376,7 @@ class Task():
     def color_random_brown(self, obj):
         shade = np.random.rand() + 0.5
         color = np.float32([shade * 156, shade * 117, shade * 95, 255]) / 255
-        p.changeVisualShape(obj, -1, rgbaColor=color)
+        env.pb_client.changeVisualShape(obj, -1, rgbaColor=color)
 
     def set_assets_root(self, assets_root):
         self.assets_root = assets_root

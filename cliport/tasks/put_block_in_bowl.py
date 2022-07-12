@@ -18,10 +18,12 @@ class PutBlockInBowlUnseenColors(Task):
         self.lang_template = "put the {pick} blocks in a {place} bowl"
         self.task_completed_desc = "done placing blocks in bowls."
 
-    def reset(self, env):
+    def reset(self, env, n_bowls = 1, n_blocks = None):
         super().reset(env)
-        n_bowls = np.random.randint(1, 4)
-        n_blocks = np.random.randint(1, n_bowls + 1)
+        if n_bowls is None:
+            n_bowls = np.random.randint(1, 4)
+        if n_blocks is None:
+            n_blocks = np.random.randint(1, n_bowls + 5)
 
         all_color_names = self.get_colors()
         selected_color_names = random.sample(all_color_names, 2)
@@ -80,7 +82,6 @@ class PutBlockInBowlUnseenColors(Task):
 
     def get_colors(self):
         return utils.TRAIN_COLORS if self.mode == 'train' else utils.EVAL_COLORS
-
 
 class PutBlockInBowlSeenColors(PutBlockInBowlUnseenColors):
     def __init__(self):
