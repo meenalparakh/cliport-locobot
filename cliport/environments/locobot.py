@@ -5,15 +5,28 @@ import pybullet as p
 from airobot.utils.common import to_quat
 from airobot.utils.common import to_rot_mat
 from scipy.spatial.transform import Rotation as R
-from locobot.utils.common import ang_in_mpi_ppi
 
 from airobot.sensor.camera.rgbdcam_pybullet import RGBDCameraPybullet
 from airobot.utils.pb_util import create_pybullet_client
 from yacs.config import CfgNode as CN
 
-from locobot.sim.discrete_env_info import *
+# from locobot.sim.discrete_env_info import *
+from cliport.environments.discrete_env_info import *
+from cliport.environments.utils.common import ang_in_mpi_ppi
 # import transformations as tf
 import time
+
+def _get_default_camera_cfg():
+    _C = CN()
+    _C.ZNEAR = 0.01
+    _C.ZFAR = 10
+    _C.WIDTH = 640
+    _C.HEIGHT = 480
+    _C.FOV = 60
+    _ROOT_C = CN()
+    _ROOT_C.CAM = CN()
+    _ROOT_C.CAM.SIM = _C
+    return _ROOT_C.clone()
 
 @dataclass
 class Locobot:
@@ -45,10 +58,10 @@ class Locobot:
         self.angle_rotate_short = 0.1
 
         self.arm_joints = [13, 14, 15, 16, 17]  # Arm joints
-        self.gripper_joints = [18, 19]  # Left and right
+        # self.gripper_joints = [18, 19]  # Left and right
         self.ee_link = self.arm_joints[-1]  # Link to which ee is attached
-        self.camera_link = 24
-        self.camera_motor_joints = [22, 23]
+        self.camera_link = 22
+        self.camera_motor_joints = [20, 21]
 
         # some configurations for the joints
         self.homej = np.array([np.pi/2, 0, 0, np.pi/2, 0])  # default config for arm
@@ -92,7 +105,7 @@ class Locobot:
 
         for i in range(len(self.arm_joints)):
             self.env.pb_client.resetJointState(self.bot, self.arm_joints[i], self.homej[i])
-        self.open_gripper()
+        # self.open_gripper()
         self.set_camera_navigation_mode()
 
         # self._setup_base()
@@ -111,43 +124,41 @@ class Locobot:
         # print('obtained camera pose')
         self.fp_cam.set_cam_ext(pos=fp_cam_pos, ori=fp_cam_ori)
         # print('set camera pose done')
-        return self.fp_cam.get_images()
+        return self.fp_cam.get_images(get_rgb=True,
+                                      get_depth=True,
+                                      get_seg=True)
 
     def create_camera(self, pos, ori, cfg=None):
         if cfg is None:
-            cfg = self._get_default_camera_cfg()
-        cam = RGBDCameraPybullet(cfgs=cfg, pb_client=self.pb_client)
+            cfg = _get_default_camera_cfg()
+        cam = RGBDCameraPybullet(cfgs=cfg, pb_client=self.env.pb_client)
         cam.set_cam_ext(pos=pos, ori=ori)
         return cam
 
-    def _get_default_camera_cfg(self):
-        _C = CN()
-        _C.ZNEAR = 0.01
-        _C.ZFAR = 10
-        _C.WIDTH = 640
-        _C.HEIGHT = 480
-        _C.FOV = 60
-        _ROOT_C = CN()
-        _ROOT_C.CAM = CN()
-        _ROOT_C.CAM.SIM = _C
-        return _ROOT_C.clone()
-
-    def get_intrinsic_matrix(self):
-        '''
-        CHECK IF THIS IS CORRECT
-        '''
-        _root_c = self._get_default_camera_cfg()
+    def get_camera_config(self):
+        _root_c = _get_default_camera_cfg()
         width = _root_c.CAM.SIM.WIDTH
         height = _root_c.CAM.SIM.HEIGHT
         fov = _root_c.CAM.SIM.FOV
+        z_near = _root_c.CAM.SIM.ZNEAR
+        z_far = _root_c.CAM.SIM.ZFAR
 
         Cu = width / 2
         Cv = height / 2
         f = width / (2 * np.tan(fov * np.pi / 360))
-        K = np.array([[f, 0, Cu],
-                      [0, f, Cv],
-                      [0, 0, 1 ]])
-        return K
+        intrinsics = (f, 0., Cu, 0., f, Cv, 0., 0., 1.)
+
+        image_size = (height, width)
+        fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose()
+        CONFIG = [{
+            'image_size': image_size,
+            'intrinsics': intrinsics,
+            'position': fp_cam_pos,
+            'rotation': fp_cam_ori,
+            'zrange': (z_near, z_far),
+            'noise': False
+        }]
+        return CONFIG
 
     def _setup_gripper(self):
         """

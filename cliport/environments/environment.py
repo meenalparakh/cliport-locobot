@@ -19,11 +19,12 @@ from airobot.utils.pb_util import create_pybullet_client
 from yacs.config import CfgNode as CN
 
 # import locobot
-from locobot.sim.locobot import Locobot
+# from locobot.sim.locobot import Locobot
+from cliport.environments.locobot import Locobot
+from cliport.environments.utils.common import *
 
 import sys
 import random
-from locobot.utils.common import *
 
 PLACE_STEP = 0.0003
 PLACE_DELTA_THRESHOLD = 0.005
@@ -35,8 +36,9 @@ LOCOBOT_URDF = 'locobot_description/locobot.urdf'
 
 
 ## TODO
-## (1) fix the image size from camera - currently resizing 
+## (1) fix the image size from camera - currently resizing
 ##     instead of setting camera config
+## (2) hard coded image size - in config - and everywhere
 
 class Environment(gym.Env):
     """OpenAI Gym-style environment class."""
@@ -64,26 +66,27 @@ class Environment(gym.Env):
         Raises:
           RuntimeError: if pybullet cannot load fileIOPlugin.
         """
-        self.n_substeps = n_substesps
+        # self.n_substeps = n_substesps
         # self.pb_client.setAdditionalSearchPath(locobot.LIB_PATH.joinpath('assets').as_posix())
 
         self.pix_size = 0.003125
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
         self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
-        self.agent_cams = cameras.RealSenseD415.CONFIG
+        # self.agent_cams = cameras.RealSenseD415.CONFIG
         self.record_cfg = record_cfg
         self.save_video = False
         self.step_counter = 0
 
+        self.pix_size = 0.003125
         self.assets_root = assets_root
 
         color_tuple = [
-            gym.spaces.Box(0, 255, config['image_size'] + (3,), dtype=np.uint8)
-            for config in self.agent_cams
+            gym.spaces.Box(0, 255, (480, 640) + (3,), dtype=np.uint8)
+            # for config in self.agent_cams
         ]
         depth_tuple = [
-            gym.spaces.Box(0.0, 20.0, config['image_size'], dtype=np.float32)
-            for config in self.agent_cams
+            gym.spaces.Box(0.0, 20.0, (480, 640), dtype=np.float32)
+            # for config in self.agent_cams
         ]
         self.observation_space = gym.spaces.Dict({
             'color': gym.spaces.Tuple(color_tuple),
@@ -94,6 +97,8 @@ class Environment(gym.Env):
             high=np.array([0.75, 0.5, 0.28], dtype=np.float32),
             shape=(3,),
             dtype=np.float32)
+        self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
+
         self.action_space = gym.spaces.Dict({
             'pose0':
                 gym.spaces.Tuple(
@@ -191,23 +196,24 @@ class Environment(gym.Env):
                                  [0, 0, -0.001])
 
         pybullet_utils.load_urdf(
-            self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.5])
+            self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.00])
 
         # Load UR5 robot arm equipped with suction end effector.
         # TODO(andyzeng): add back parallel-jaw grippers.
         # self.ur5 = pybullet_utils.load_urdf(
         #     p, os.path.join(self.assets_root, UR5_URDF_PATH))
-        self.bot_id = pybullet_utils.load_urdf(
-                        self.pb_client, os.path.join(self.assets_root, LOCOBOT_URDF)
-                        [0, 0, 0.001])
+        self.bot_id = pybullet_utils.load_urdf(self.pb_client,
+                                               os.path.join(self.assets_root, LOCOBOT_URDF),
+                                               [0, 0, 0.001])
 
         self.locobot = Locobot(self, self.bot_id)
+        # import pdb; pdb.set_trace()
         self.locobot.reset()
 
-        self.ee = self.task.ee(self.assets_root, self.locobot, 
-                               self.locobot.ee_link, self.obj_ids)
+        self.ee = self.task.ee(self.assets_root, self.pb_client, self.bot_id,
+                               self.locobot.ee_link + 1, self.obj_ids)
         self.ee_tip = self.locobot.ee_link + 1 #10  # Link ID of suction cup.
-        
+
         # Get revolute joint indices of robot (skip fixed joints).
         # n_joints = p.getNumJoints(self.ur5)
         # joints = [p.getJointInfo(self.ur5, i) for i in range(n_joints)]
@@ -239,8 +245,8 @@ class Environment(gym.Env):
           (obs, reward, done, info) tuple containing MDP step data.
         """
         if action is not None:
-            timeout = self.task.primitive(self.movej, self.movep, 
-                                          self.ee, action['pose0'], 
+            timeout = self.task.primitive(self.movej, self.movep,
+                                          self.ee, action['pose0'],
                                           action['pose1'])
 
             # Exit early if action times out. We still return an observation
@@ -280,7 +286,7 @@ class Environment(gym.Env):
         # Only support rgb_array for now.
         if mode != 'rgb_array':
             raise NotImplementedError('Only rgb_array implemented')
-        color, _, _ = self.render_camera(self.agent_cams[0])
+        color, _, _ = self.render_camera()
         return color
 
     def render_camera(self, config = None, image_size=None, shadow=1):
@@ -288,10 +294,10 @@ class Environment(gym.Env):
         # if not image_size:
         #     image_size = config['image_size']
 
-        color, depth = self.locobot.get_fp_images()
+        color, depth, segm = self.locobot.get_fp_images()
         # color = cv2.resize(color, image_size, interpolation=cv2.INTER_AREA)
         # depth = cv2.resize(depth, image_size, interpolation=cv2.INTER_AREA)
-        return color, depth, None
+        return color, depth, segm
 
         # OpenGL camera settings.
         # lookdir = np.float32([0, 0, 1]).reshape(3, 1)
@@ -439,7 +445,7 @@ class Environment(gym.Env):
 
     def add_video_frame(self):
         # Render frame.
-        config = self.agent_cams[0]
+        config = self.locobot.get_camera_config()[0]
         image_size = (self.record_cfg['video_height'], self.record_cfg['video_width'])
         color, depth, _ = self.render_camera(config, image_size, shadow=0)
         color = np.array(color)
@@ -504,12 +510,24 @@ class Environment(gym.Env):
         # Get RGB-D camera image observations.
         obs = {'color': (), 'depth': ()}
         # for config in self.agent_cams:
-        color, depth, _ = self.render_camera(config)
+        color, depth, _ = self.render_camera()
         obs['color'] += (color,)
         obs['depth'] += (depth,)
 
         return obs
 
+    def _get_img_from_obs(self, obs):
+        cam_config = self.locobot.get_camera_config()
+
+        # Get color and height maps from RGB-D images.
+        cmap, hmap = utils.get_fused_heightmap(
+            obs, cam_config, self.bounds, self.pix_size)
+        img = np.concatenate((cmap,
+                              hmap[Ellipsis, None],
+                              hmap[Ellipsis, None],
+                              hmap[Ellipsis, None]), axis=2)
+        # assert img.shape == self.in_shape, img.shape
+        return img
 
 class EnvironmentNoRotationsWithHeightmap(Environment):
     """Environment that disables any rotations and always passes [0, 0, 0, 1]."""
@@ -555,11 +573,12 @@ class EnvironmentNoRotationsWithHeightmap(Environment):
         obs = {}
 
         color_depth_obs = {'color': (), 'depth': ()}
-        # for config in self.agent_cams:
-        color, depth, _ = self.render_camera(config)
-        color_depth_obs['color'] += (color,)
-        color_depth_obs['depth'] += (depth,)
-        cmap, hmap = utils.get_fused_heightmap(color_depth_obs, self.agent_cams,
+        configs = self.locobot.get_camera_config()
+        for config in configs:
+            color, depth, _ = self.render_camera(config)
+            color_depth_obs['color'] += (color,)
+            color_depth_obs['depth'] += (depth,)
+        cmap, hmap = utils.get_fused_heightmap(color_depth_obs, configs,
                                                self.task.bounds, pix_size=0.003125)
         obs['heightmap'] = (cmap, hmap)
         return obs

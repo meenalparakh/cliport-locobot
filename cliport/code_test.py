@@ -24,7 +24,7 @@ def main(cfg):
         hz=480,
         record_cfg=cfg['record']
     )
-    task = tasks.names[cfg['task']]()
+    task = tasks.names['put-block-in-bowl-seen-colors']()
     task.mode = cfg['mode']
     record = cfg['record']['save_video']
     save_data = cfg['save_data']
@@ -50,7 +50,9 @@ def main(cfg):
 
     env.set_task(task)
     obs = env.reset()
-    
+    while True:
+        env.step_simulation()
+
     # # Collect training data from oracle demonstrations.
     # while dataset.n_episodes < cfg['n']:
     #     episode, total_reward = [], 0
