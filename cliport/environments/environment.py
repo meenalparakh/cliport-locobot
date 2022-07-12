@@ -211,7 +211,7 @@ class Environment(gym.Env):
         self.locobot.reset()
 
         self.ee = self.task.ee(self.assets_root, self.pb_client, self.bot_id,
-                               self.locobot.ee_link + 1, self.obj_ids)
+                               self.locobot.ee_link, self.obj_ids)
         self.ee_tip = self.locobot.ee_link + 1 #10  # Link ID of suction cup.
 
         # Get revolute joint indices of robot (skip fixed joints).

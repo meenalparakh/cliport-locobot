@@ -15,8 +15,9 @@ SUCTION_HEAD_URDF = 'ur5/suction/suction-head.urdf'
 class Gripper:
     """Base gripper class."""
 
-    def __init__(self, assets_root):
+    def __init__(self, assets_root, pb_client):
         self.assets_root = assets_root
+        self.pb_client = pb_client
         self.activated = False
 
     def step(self):
@@ -34,9 +35,9 @@ class Gripper:
 class Spatula(Gripper):
     """Simulate simple spatula for pushing."""
 
-    def __init__(self, assets_root, robot, ee, obj_ids):  # pylint: disable=unused-argument
+    def __init__(self, assets_root, pb_client, robot, ee, obj_ids):  # pylint: disable=unused-argument
         """Creates spatula and 'attaches' it to the robot."""
-        super().__init__(assets_root)
+        super().__init__(assets_root, pb_client)
 
         # Load spatula model.
         pose = ((0.487, 0.109, 0.438), p.getQuaternionFromEuler((np.pi, 0, 0)))
@@ -56,7 +57,7 @@ class Spatula(Gripper):
 class Suction(Gripper):
     """Simulate simple suction dynamics."""
 
-    def __init__(self, assets_root, robot, ee, obj_ids):
+    def __init__(self, assets_root, pb_client, robot, ee, obj_ids):
         """Creates suction and 'attaches' it to the robot.
 
         Has special cases when dealing with rigid vs deformables. For rigid,
@@ -81,7 +82,7 @@ class Suction(Gripper):
           ee: int representing PyBullet ID of end effector link.
           obj_ids: list of PyBullet IDs of all suctionable objects in the env.
         """
-        super().__init__(assets_root)
+        super().__init__(assets_root, pb_client)
 
         # Load suction gripper base model (visual only).
         pose = ((0.487, 0.109, 0.438), p.getQuaternionFromEuler((np.pi, 0, 0)))
@@ -243,39 +244,11 @@ class Suction(Gripper):
 class LocobotSuction(Gripper):
     """Simulate simple suction dynamics."""
 
-    def __init__(self, assets_root, robot, ee, obj_ids):
-        super().__init__(assets_root)
+    def __init__(self, assets_root, pb_client, locobot, ee, obj_ids):
+        super().__init__(assets_root, pb_client)
 
-        # Load suction gripper base model (visual only).
-        pose = ((0.487, 0.109, 0.438), p.getQuaternionFromEuler((np.pi, 0, 0)))
-        base = pybullet_utils.load_urdf(
-            p, os.path.join(self.assets_root, SUCTION_BASE_URDF), pose[0], pose[1])
-        p.createConstraint(
-            parentBodyUniqueId=robot,
-            parentLinkIndex=ee,
-            childBodyUniqueId=base,
-            childLinkIndex=-1,
-            jointType=p.JOINT_FIXED,
-            jointAxis=(0, 0, 0),
-            parentFramePosition=(0, 0, 0),
-            childFramePosition=(0, 0, 0.01))
-
-        # Load suction tip model (visual and collision) with compliance.
-        # urdf = 'assets/ur5/suction/suction-head.urdf'
-        pose = ((0.487, 0.109, 0.347), p.getQuaternionFromEuler((np.pi, 0, 0)))
-        self.body = pybullet_utils.load_urdf(
-            p, os.path.join(self.assets_root, SUCTION_HEAD_URDF), pose[0], pose[1])
-        constraint_id = p.createConstraint(
-            parentBodyUniqueId=robot,
-            parentLinkIndex=ee,
-            childBodyUniqueId=self.body,
-            childLinkIndex=-1,
-            jointType=p.JOINT_FIXED,
-            jointAxis=(0, 0, 0),
-            parentFramePosition=(0, 0, 0),
-            childFramePosition=(0, 0, -0.08))
-        p.changeConstraint(constraint_id, maxForce=50)
-
+        self.locobot_id = locobot
+        self.ee = ee
         # Reference to object IDs in environment for simulating suction.
         self.obj_ids = obj_ids
 
@@ -309,7 +282,8 @@ class LocobotSuction(Gripper):
         # del def_ids
 
         if not self.activated:
-            points = p.getContactPoints(bodyA=self.body, linkIndexA=0)
+            points = self.pb_client.getContactPoints(bodyA=self.locobot_id, 
+                                                     linkIndexA=self.ee)
             # print(points)
             if points:
 
@@ -317,18 +291,18 @@ class LocobotSuction(Gripper):
                 for point in points:
                     obj_id, contact_link = point[2], point[4]
                 if obj_id in self.obj_ids['rigid']:
-                    body_pose = p.getLinkState(self.body, 0)
-                    obj_pose = p.getBasePositionAndOrientation(obj_id)
-                    world_to_body = p.invertTransform(body_pose[0], body_pose[1])
-                    obj_to_body = p.multiplyTransforms(world_to_body[0],
+                    body_pose = self.pb_client.getLinkState(self.locobot_id, self.ee)
+                    obj_pose = self.pb_client.getBasePositionAndOrientation(obj_id)
+                    world_to_body = self.pb_client.invertTransform(body_pose[0], body_pose[1])
+                    obj_to_body = self.pb_client.multiplyTransforms(world_to_body[0],
                                                        world_to_body[1],
                                                        obj_pose[0], obj_pose[1])
-                    self.contact_constraint = p.createConstraint(
-                        parentBodyUniqueId=self.body,
-                        parentLinkIndex=0,
+                    self.contact_constraint = self.pb_client.createConstraint(
+                        parentBodyUniqueId=self.locobot_id,
+                        parentLinkIndex=self.ee,
                         childBodyUniqueId=obj_id,
                         childLinkIndex=contact_link,
-                        jointType=p.JOINT_FIXED,
+                        jointType=self.pb_client.JOINT_FIXED,
                         jointAxis=(0, 0, 0),
                         parentFramePosition=obj_to_body[0],
                         parentFrameOrientation=obj_to_body[1],
@@ -354,7 +328,7 @@ class LocobotSuction(Gripper):
             # Release gripped rigid object (if any).
             if self.contact_constraint is not None:
                 try:
-                    p.removeConstraint(self.contact_constraint)
+                    self.pb_client.removeConstraint(self.contact_constraint)
                     self.contact_constraint = None
                 except:  # pylint: disable=bare-except
                     pass
@@ -364,7 +338,7 @@ class LocobotSuction(Gripper):
             # Release gripped deformable object (if any).
             if self.def_grip_anchors:
                 for anchor_id in self.def_grip_anchors:
-                    p.removeConstraint(anchor_id)
+                    self.pb_client.removeConstraint(anchor_id)
                 self.def_grip_anchors = []
                 self.def_grip_item = None
                 self.def_min_vetex = None
@@ -372,17 +346,17 @@ class LocobotSuction(Gripper):
 
     def detect_contact(self):
         """Detects a contact with a rigid object."""
-        body, link = self.body, 0
+        body, link = self.locobot_id, self.ee
         if self.activated and self.contact_constraint is not None:
             try:
-                info = p.getConstraintInfo(self.contact_constraint)
+                info = self.pb_client.getConstraintInfo(self.contact_constraint)
                 body, link = info[2], info[3]
             except:  # pylint: disable=bare-except
                 self.contact_constraint = None
                 pass
 
         # Get all contact points between the suction and a rigid body.
-        points = p.getContactPoints(bodyA=body, linkIndexA=link)
+        points = self.pb_client.getContactPoints(bodyA=body, linkIndexA=link)
         # print(points)
         # exit()
         if self.activated:
@@ -399,5 +373,5 @@ class LocobotSuction(Gripper):
 
         suctioned_object = None
         if self.contact_constraint is not None:
-            suctioned_object = p.getConstraintInfo(self.contact_constraint)[2]
+            suctioned_object = self.pb_client.getConstraintInfo(self.contact_constraint)[2]
         return suctioned_object is not None

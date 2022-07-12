@@ -20,7 +20,7 @@ class Task():
     """Base Task class."""
 
     def __init__(self):
-        self.ee = Suction
+        self.ee = LocobotSuction #Suction
         self.mode = 'train'
         self.sixdof = False
         self.primitive = primitives.PickPlace()
