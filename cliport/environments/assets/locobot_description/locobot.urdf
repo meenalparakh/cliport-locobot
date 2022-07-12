@@ -463,7 +463,7 @@
         <limit effort="1" lower="-1.57" upper="1.57" velocity="1"/>
     </joint>
 
-    <link name="finger_r">
+    <!-- <link name="finger_r">
         <inertial>
             <origin rpy="0 0 0" xyz="0.0100191457715113 -0.00843835347348892 -0.00483280251641866"/>
             <mass value="0.0121931459003602"/>
@@ -492,10 +492,10 @@
         <child link="finger_r"/>
         <axis xyz="0 1 0"/>
         <limit effort="1" lower="-1" upper="0" velocity="1"/>
-    </joint>
+    </joint> -->
 
 
-    <link name="finger_l">
+    <!-- <link name="finger_l">
         <inertial>
             <origin rpy="0 0 0" xyz="0.0100191599590265 0.00643833435729511 -0.00483280251641866"/>
             <mass value="0.0121931459003603"/>
@@ -524,7 +524,7 @@
         <child link="finger_l"/>
         <axis xyz="0 1 0"/>
         <limit effort="1" lower="0" upper="1" velocity="1"/>
-    </joint>
+    </joint> -->
 
 
 

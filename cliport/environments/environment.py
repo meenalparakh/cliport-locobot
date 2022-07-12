@@ -34,6 +34,10 @@ PLANE_URDF_PATH = 'plane/plane.urdf'
 LOCOBOT_URDF = 'locobot_description/locobot.urdf'
 
 
+## TODO
+## (1) fix the image size from camera - currently resizing 
+##     instead of setting camera config
+
 class Environment(gym.Env):
     """OpenAI Gym-style environment class."""
 
@@ -153,7 +157,7 @@ class Environment(gym.Env):
         """List of (fixed, rigid, or deformable) objects in env."""
         fixed_base = 1 if category == 'fixed' else 0
         obj_id = pybullet_utils.load_urdf(
-            p,
+            self.pb_client,
             os.path.join(self.assets_root, urdf),
             pose[0],
             pose[1],
@@ -200,17 +204,18 @@ class Environment(gym.Env):
         self.locobot = Locobot(self, self.bot_id)
         self.locobot.reset()
 
-        self.ee = self.task.ee(self.assets_root, self.locobot, self., self.obj_ids)
-        self.ee_tip = 10  # Link ID of suction cup.
-
+        self.ee = self.task.ee(self.assets_root, self.locobot, 
+                               self.locobot.ee_link, self.obj_ids)
+        self.ee_tip = self.locobot.ee_link + 1 #10  # Link ID of suction cup.
+        
         # Get revolute joint indices of robot (skip fixed joints).
-        n_joints = p.getNumJoints(self.ur5)
-        joints = [p.getJointInfo(self.ur5, i) for i in range(n_joints)]
-        self.joints = [j[0] for j in joints if j[2] == p.JOINT_REVOLUTE]
+        # n_joints = p.getNumJoints(self.ur5)
+        # joints = [p.getJointInfo(self.ur5, i) for i in range(n_joints)]
+        # self.joints = [j[0] for j in joints if j[2] == p.JOINT_REVOLUTE]
 
-        # Move robot to home joint configuration.
-        for i in range(len(self.joints)):
-            p.resetJointState(self.ur5, self.joints[i], self.homej[i])
+        # # Move robot to home joint configuration.
+        # for i in range(len(self.joints)):
+        #     p.resetJointState(self.ur5, self.joints[i], self.homej[i])
 
         # Reset end effector.
         self.ee.release()
@@ -219,7 +224,7 @@ class Environment(gym.Env):
         self.task.reset(self)
 
         # Re-enable rendering.
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+        self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_RENDERING, 1)
 
         obs, _, _, _ = self.step()
         return obs
@@ -234,16 +239,18 @@ class Environment(gym.Env):
           (obs, reward, done, info) tuple containing MDP step data.
         """
         if action is not None:
-            timeout = self.task.primitive(self.movej, self.movep, self.ee, action['pose0'], action['pose1'])
+            timeout = self.task.primitive(self.movej, self.movep, 
+                                          self.ee, action['pose0'], 
+                                          action['pose1'])
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
             if timeout:
                 obs = {'color': (), 'depth': ()}
-                for config in self.agent_cams:
-                    color, depth, _ = self.render_camera(config)
-                    obs['color'] += (color,)
-                    obs['depth'] += (depth,)
+                # for config in self.agent_cams:
+                color, depth, _ = self.render_camera(config)
+                obs['color'] += (color,)
+                obs['depth'] += (depth,)
                 return obs, 0.0, True, self.info
 
         # Step simulator asynchronously until objects settle.
@@ -262,7 +269,7 @@ class Environment(gym.Env):
         return obs, reward, done, info
 
     def step_simulation(self):
-        p.stepSimulation()
+        self.pb_client.stepSimulation()
         self.step_counter += 1
 
         if self.save_video and self.step_counter % 5 == 0:
@@ -276,60 +283,65 @@ class Environment(gym.Env):
         color, _, _ = self.render_camera(self.agent_cams[0])
         return color
 
-    def render_camera(self, config, image_size=None, shadow=1):
+    def render_camera(self, config = None, image_size=None, shadow=1):
         """Render RGB-D image with specified camera configuration."""
-        if not image_size:
-            image_size = config['image_size']
+        # if not image_size:
+        #     image_size = config['image_size']
+
+        color, depth = self.locobot.get_fp_images()
+        # color = cv2.resize(color, image_size, interpolation=cv2.INTER_AREA)
+        # depth = cv2.resize(depth, image_size, interpolation=cv2.INTER_AREA)
+        return color, depth, None
 
         # OpenGL camera settings.
-        lookdir = np.float32([0, 0, 1]).reshape(3, 1)
-        updir = np.float32([0, -1, 0]).reshape(3, 1)
-        rotation = p.getMatrixFromQuaternion(config['rotation'])
-        rotm = np.float32(rotation).reshape(3, 3)
-        lookdir = (rotm @ lookdir).reshape(-1)
-        updir = (rotm @ updir).reshape(-1)
-        lookat = config['position'] + lookdir
-        focal_len = config['intrinsics'][0]
-        znear, zfar = config['zrange']
-        viewm = p.computeViewMatrix(config['position'], lookat, updir)
-        fovh = (image_size[0] / 2) / focal_len
-        fovh = 180 * np.arctan(fovh) * 2 / np.pi
+        # lookdir = np.float32([0, 0, 1]).reshape(3, 1)
+        # updir = np.float32([0, -1, 0]).reshape(3, 1)
+        # rotation = p.getMatrixFromQuaternion(config['rotation'])
+        # rotm = np.float32(rotation).reshape(3, 3)
+        # lookdir = (rotm @ lookdir).reshape(-1)
+        # updir = (rotm @ updir).reshape(-1)
+        # lookat = config['position'] + lookdir
+        # focal_len = config['intrinsics'][0]
+        # znear, zfar = config['zrange']
+        # viewm = p.computeViewMatrix(config['position'], lookat, updir)
+        # fovh = (image_size[0] / 2) / focal_len
+        # fovh = 180 * np.arctan(fovh) * 2 / np.pi
 
-        # Notes: 1) FOV is vertical FOV 2) aspect must be float
-        aspect_ratio = image_size[1] / image_size[0]
-        projm = p.computeProjectionMatrixFOV(fovh, aspect_ratio, znear, zfar)
+        # # Notes: 1) FOV is vertical FOV 2) aspect must be float
+        # aspect_ratio = image_size[1] / image_size[0]
+        # projm = p.computeProjectionMatrixFOV(fovh, aspect_ratio, znear, zfar)
 
-        # Render with OpenGL camera settings.
-        _, _, color, depth, segm = p.getCameraImage(
-            width=image_size[1],
-            height=image_size[0],
-            viewMatrix=viewm,
-            projectionMatrix=projm,
-            shadow=shadow,
-            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
-            renderer=p.ER_BULLET_HARDWARE_OPENGL)
+        # # Render with OpenGL camera settings.
+        # _, _, color, depth, segm = p.getCameraImage(
+        #     width=image_size[1],
+        #     height=image_size[0],
+        #     viewMatrix=viewm,
+        #     projectionMatrix=projm,
+        #     shadow=shadow,
+        #     flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+        #     renderer=p.ER_BULLET_HARDWARE_OPENGL)
 
-        # Get color image.
-        color_image_size = (image_size[0], image_size[1], 4)
-        color = np.array(color, dtype=np.uint8).reshape(color_image_size)
-        color = color[:, :, :3]  # remove alpha channel
-        if config['noise']:
-            color = np.int32(color)
-            color += np.int32(self._random.normal(0, 3, image_size))
-            color = np.uint8(np.clip(color, 0, 255))
+        # # Get color image.
+        # color_image_size = (image_size[0], image_size[1], 4)
+        # color = np.array(color, dtype=np.uint8).reshape(color_image_size)
+        # color = color[:, :, :3]  # remove alpha channel
+        # if config['noise']:
+        #     color = np.int32(color)
+        #     color += np.int32(self._random.normal(0, 3, image_size))
+        #     color = np.uint8(np.clip(color, 0, 255))
 
-        # Get depth image.
-        depth_image_size = (image_size[0], image_size[1])
-        zbuffer = np.array(depth).reshape(depth_image_size)
-        depth = (zfar + znear - (2. * zbuffer - 1.) * (zfar - znear))
-        depth = (2. * znear * zfar) / depth
-        if config['noise']:
-            depth += self._random.normal(0, 0.003, depth_image_size)
+        # # Get depth image.
+        # depth_image_size = (image_size[0], image_size[1])
+        # zbuffer = np.array(depth).reshape(depth_image_size)
+        # depth = (zfar + znear - (2. * zbuffer - 1.) * (zfar - znear))
+        # depth = (2. * znear * zfar) / depth
+        # if config['noise']:
+        #     depth += self._random.normal(0, 0.003, depth_image_size)
 
-        # Get segmentation image.
-        segm = np.uint8(segm).reshape(depth_image_size)
+        # # Get segmentation image.
+        # segm = np.uint8(segm).reshape(depth_image_size)
 
-        return color, depth, segm
+        # return color, depth, segm
 
     @property
     def info(self):
@@ -344,10 +356,11 @@ class Environment(gym.Env):
         info = {}  # object id : (position, rotation, dimensions)
         for obj_ids in self.obj_ids.values():
             for obj_id in obj_ids:
-                pos, rot = p.getBasePositionAndOrientation(obj_id)
-                dim = p.getVisualShapeData(obj_id)[0][3]
+                pos, rot = self.pb_client.getBasePositionAndOrientation(obj_id)
+                dim = self.pb_client.getVisualShapeData(obj_id)[0][3]
                 info[obj_id] = (pos, rot, dim)
 
+        info[self.bot_id] = self.locobot.get_base_pose()
         info['lang_goal'] = self.get_lang_goal()
         return info
 
@@ -370,29 +383,31 @@ class Environment(gym.Env):
         if self.save_video:
             timeout = timeout * 50
 
-        t0 = time.time()
-        while (time.time() - t0) < timeout:
-            currj = [p.getJointState(self.ur5, i)[0] for i in self.joints]
-            currj = np.array(currj)
-            diffj = targj - currj
-            if all(np.abs(diffj) < 1e-2):
-                return False
+        self.locobot.move_arm(targj)
 
-            # Move with constant velocity
-            norm = np.linalg.norm(diffj)
-            v = diffj / norm if norm > 0 else 0
-            stepj = currj + v * speed
-            gains = np.ones(len(self.joints))
-            p.setJointMotorControlArray(
-                bodyIndex=self.ur5,
-                jointIndices=self.joints,
-                controlMode=p.POSITION_CONTROL,
-                targetPositions=stepj,
-                positionGains=gains)
-            self.step_counter += 1
-            self.step_simulation()
+        # t0 = time.time()
+        # while (time.time() - t0) < timeout:
+        #     currj = [p.getJointState(self.ur5, i)[0] for i in self.joints]
+        #     currj = np.array(currj)
+        #     diffj = targj - currj
+        #     if all(np.abs(diffj) < 1e-2):
+        #         return False
 
-        print(f'Warning: movej exceeded {timeout} second timeout. Skipping.')
+        #     # Move with constant velocity
+        #     norm = np.linalg.norm(diffj)
+        #     v = diffj / norm if norm > 0 else 0
+        #     stepj = currj + v * speed
+        #     gains = np.ones(len(self.joints))
+        #     p.setJointMotorControlArray(
+        #         bodyIndex=self.ur5,
+        #         jointIndices=self.joints,
+        #         controlMode=p.POSITION_CONTROL,
+        #         targetPositions=stepj,
+        #         positionGains=gains)
+        #     self.step_counter += 1
+        #     self.step_simulation()
+
+        # print(f'Warning: movej exceeded {timeout} second timeout. Skipping.')
         return True
 
     def start_rec(self, video_filename):
@@ -412,14 +427,14 @@ class Environment(gym.Env):
                                                fps=self.record_cfg['fps'],
                                                format='FFMPEG',
                                                codec='h264',)
-        p.setRealTimeSimulation(False)
+        self.pb_client.setRealTimeSimulation(False)
         self.save_video = True
 
     def end_rec(self):
         if hasattr(self, 'video_writer'):
             self.video_writer.close()
 
-        p.setRealTimeSimulation(True)
+        self.pb_client.setRealTimeSimulation(True)
         self.save_video = False
 
     def add_video_frame(self):
@@ -464,33 +479,34 @@ class Environment(gym.Env):
 
     def movep(self, pose, speed=0.01):
         """Move UR5 to target end effector pose."""
-        targj = self.solve_ik(pose)
-        return self.movej(targj, speed)
+        self.locobot.move_ee(pose[0], pose[1])
+        # targj = self.solve_ik(pose)
+        # return self.movej(targj, speed)
 
-    def solve_ik(self, pose):
-        """Calculate joint configuration with inverse kinematics."""
-        joints = p.calculateInverseKinematics(
-            bodyUniqueId=self.ur5,
-            endEffectorLinkIndex=self.ee_tip,
-            targetPosition=pose[0],
-            targetOrientation=pose[1],
-            lowerLimits=[-3 * np.pi / 2, -2.3562, -17, -17, -17, -17],
-            upperLimits=[-np.pi / 2, 0, 17, 17, 17, 17],
-            jointRanges=[np.pi, 2.3562, 34, 34, 34, 34],  # * 6,
-            restPoses=np.float32(self.homej).tolist(),
-            maxNumIterations=100,
-            residualThreshold=1e-5)
-        joints = np.float32(joints)
-        joints[2:] = (joints[2:] + np.pi) % (2 * np.pi) - np.pi
-        return joints
+    # def solve_ik(self, pose):
+    #     """Calculate joint configuration with inverse kinematics."""
+    #     joints = p.calculateInverseKinematics(
+    #         bodyUniqueId=self.ur5,
+    #         endEffectorLinkIndex=self.ee_tip,
+    #         targetPosition=pose[0],
+    #         targetOrientation=pose[1],
+    #         lowerLimits=[-3 * np.pi / 2, -2.3562, -17, -17, -17, -17],
+    #         upperLimits=[-np.pi / 2, 0, 17, 17, 17, 17],
+    #         jointRanges=[np.pi, 2.3562, 34, 34, 34, 34],  # * 6,
+    #         restPoses=np.float32(self.homej).tolist(),
+    #         maxNumIterations=100,
+    #         residualThreshold=1e-5)
+    #     joints = np.float32(joints)
+    #     joints[2:] = (joints[2:] + np.pi) % (2 * np.pi) - np.pi
+    #     return joints
 
     def _get_obs(self):
         # Get RGB-D camera image observations.
         obs = {'color': (), 'depth': ()}
-        for config in self.agent_cams:
-            color, depth, _ = self.render_camera(config)
-            obs['color'] += (color,)
-            obs['depth'] += (depth,)
+        # for config in self.agent_cams:
+        color, depth, _ = self.render_camera(config)
+        obs['color'] += (color,)
+        obs['depth'] += (depth,)
 
         return obs
 
@@ -539,10 +555,10 @@ class EnvironmentNoRotationsWithHeightmap(Environment):
         obs = {}
 
         color_depth_obs = {'color': (), 'depth': ()}
-        for config in self.agent_cams:
-            color, depth, _ = self.render_camera(config)
-            color_depth_obs['color'] += (color,)
-            color_depth_obs['depth'] += (depth,)
+        # for config in self.agent_cams:
+        color, depth, _ = self.render_camera(config)
+        color_depth_obs['color'] += (color,)
+        color_depth_obs['depth'] += (depth,)
         cmap, hmap = utils.get_fused_heightmap(color_depth_obs, self.agent_cams,
                                                self.task.bounds, pix_size=0.003125)
         obs['heightmap'] = (cmap, hmap)

@@ -7,6 +7,10 @@ from airobot.utils.common import to_rot_mat
 from scipy.spatial.transform import Rotation as R
 from locobot.utils.common import ang_in_mpi_ppi
 
+from airobot.sensor.camera.rgbdcam_pybullet import RGBDCameraPybullet
+from airobot.utils.pb_util import create_pybullet_client
+from yacs.config import CfgNode as CN
+
 from locobot.sim.discrete_env_info import *
 # import transformations as tf
 import time
@@ -92,9 +96,58 @@ class Locobot:
         self.set_camera_navigation_mode()
 
         # self._setup_base()
-        self._setup_gripper()
+        # self._setup_gripper()
+        self.set_locobot_camera_pan_tilt(0., 0.6)
+        fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose()
+        # first-person camera
+        self.fp_cam = self.create_camera(pos=fp_cam_pos, ori=fp_cam_ori)
+
 
         self.forward_simulation()
+
+    def get_fp_images(self):
+        # print('entered fp images')
+        fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose()
+        # print('obtained camera pose')
+        self.fp_cam.set_cam_ext(pos=fp_cam_pos, ori=fp_cam_ori)
+        # print('set camera pose done')
+        return self.fp_cam.get_images()
+
+    def create_camera(self, pos, ori, cfg=None):
+        if cfg is None:
+            cfg = self._get_default_camera_cfg()
+        cam = RGBDCameraPybullet(cfgs=cfg, pb_client=self.pb_client)
+        cam.set_cam_ext(pos=pos, ori=ori)
+        return cam
+
+    def _get_default_camera_cfg(self):
+        _C = CN()
+        _C.ZNEAR = 0.01
+        _C.ZFAR = 10
+        _C.WIDTH = 640
+        _C.HEIGHT = 480
+        _C.FOV = 60
+        _ROOT_C = CN()
+        _ROOT_C.CAM = CN()
+        _ROOT_C.CAM.SIM = _C
+        return _ROOT_C.clone()
+
+    def get_intrinsic_matrix(self):
+        '''
+        CHECK IF THIS IS CORRECT
+        '''
+        _root_c = self._get_default_camera_cfg()
+        width = _root_c.CAM.SIM.WIDTH
+        height = _root_c.CAM.SIM.HEIGHT
+        fov = _root_c.CAM.SIM.FOV
+
+        Cu = width / 2
+        Cv = height / 2
+        f = width / (2 * np.tan(fov * np.pi / 360))
+        K = np.array([[f, 0, Cu],
+                      [0, f, Cv],
+                      [0, 0, 1 ]])
+        return K
 
     def _setup_gripper(self):
         """
@@ -460,9 +513,10 @@ class Locobot:
 
     def forward_simulation(self, nsteps = 1):
         # return None
-        self.step_simulation_calls += nsteps
-        for i in range(nsteps):
-            self.env.pb_client.stepSimulation()
+        self.env.step_simulation()
+        # self.step_simulation_calls += nsteps
+        # for i in range(nsteps):
+        #     self.env.pb_client.stepSimulation()
 
 ##-----------------------------------------------------------------------------------------------
 ##                 discrete navigation functions
