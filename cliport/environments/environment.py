@@ -207,7 +207,7 @@ class Environment(gym.Env):
                                                [0, 0, 0.001])
 
         self.locobot = Locobot(self, self.bot_id)
-        # import pdb; pdb.set_trace()
+        import pdb; pdb.set_trace()
         self.locobot.reset()
 
         self.ee = self.task.ee(self.assets_root, self.pb_client, self.bot_id,

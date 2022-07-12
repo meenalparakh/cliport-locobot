@@ -59,9 +59,9 @@ class Locobot:
 
         self.arm_joints = [13, 14, 15, 16, 17]  # Arm joints
         # self.gripper_joints = [18, 19]  # Left and right
-        self.ee_link = self.arm_joints[-1]  # Link to which ee is attached
-        self.camera_link = 22
-        self.camera_motor_joints = [20, 21]
+        self.ee_link = 19  # Link to which ee is attached
+        self.camera_link = 24
+        self.camera_motor_joints = [22, 23]
 
         # some configurations for the joints
         self.homej = np.array([np.pi/2, 0, 0, np.pi/2, 0])  # default config for arm

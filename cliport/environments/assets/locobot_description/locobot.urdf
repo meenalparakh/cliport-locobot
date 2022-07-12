@@ -26,6 +26,9 @@
                 <mesh filename="meshes/main_body.dae"/>
             </geometry>
             <origin rpy="0 0 0" xyz="0.001 0 0.05199"/>
+            <material name="grey_metal">
+              <color rgba="0.2 0.2 0.2 1"/>
+            </material>
         </visual>
         <collision name="base">
             <geometry>
@@ -494,6 +497,78 @@
         <limit effort="1" lower="-1" upper="0" velocity="1"/>
     </joint> -->
 
+    <joint name="joint_6" type="fixed">
+        <origin rpy="1.57 0 1.57" xyz="0.07285 0 0.0050143"/>
+        <parent link="gripper_link"/>
+        <child link="finger"/>
+        <axis xyz="0 1 0"/>
+        <limit effort="1" lower="-1" upper="0" velocity="1"/>
+    </joint>
+
+    <link name="finger">
+      <contact>
+        <lateral_friction value="1.0"/>
+        <rolling_friction value="0.0001"/>
+        <inertia_scaling value="3.0"/>
+      </contact>
+      <inertial>
+        <origin rpy="0 0 0" xyz="0.0100191457715113 0.06 0"/>
+         <mass value=".05"/>
+         <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+      </inertial>
+      <visual>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <geometry>
+          <mesh filename="suction/head.obj" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="darkgrey">
+          <color rgba="0.2 0.2 0.2 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <geometry>
+          <mesh filename="suction/head.obj" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="tipJoint" type="fixed">
+      <parent link="finger"/>
+      <child link="tipLink"/>
+      <origin rpy="0.0 0.0 0.0" xyz="0.0 0.0 0.029"/>
+      <axis xyz="0 0 1"/>
+      <limit effort="150.0" lower="-6.28318530718" upper="6.28318530718" velocity="3.15"/>
+      <dynamics damping="10.0" friction="0.0"/>
+    </joint>
+
+    <link name="tipLink">
+      <contact>
+        <lateral_friction value="1.0"/>
+        <rolling_friction value="0.0001"/>
+        <inertia_scaling value="3.0"/>
+      </contact>
+      <inertial>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+         <mass value=".05"/>
+         <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+      </inertial>
+      <visual>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <geometry>
+          <mesh filename="suction/tip.obj" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="blue">
+          <color rgba="0.18039216, 0.50588235, 0.77254902 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <geometry>
+          <cylinder length="0.028" radius="0.001"/>
+        </geometry>
+      </collision>
+    </link>
 
     <!-- <link name="finger_l">
         <inertial>
