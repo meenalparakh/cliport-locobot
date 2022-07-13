@@ -73,21 +73,20 @@ class Environment(gym.Env):
         self.pix_size = 0.003125
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
         self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
-        # self.agent_cams = cameras.RealSenseD415.CONFIG
+        self.agent_cams = cameras.RealSenseD415.CONFIG
         self.record_cfg = record_cfg
         self.save_video = False
         self.step_counter = 0
 
-        self.pix_size = 0.003125
         self.assets_root = assets_root
 
         color_tuple = [
-            gym.spaces.Box(0, 255, (480, 640) + (3,), dtype=np.uint8)
-            # for config in self.agent_cams
+            gym.spaces.Box(0, 255, config['image_size'] + (3,), dtype=np.uint8)
+            for config in self.agent_cams
         ]
         depth_tuple = [
-            gym.spaces.Box(0.0, 20.0, (480, 640), dtype=np.float32)
-            # for config in self.agent_cams
+            gym.spaces.Box(0.0, 20.0, config['image_size'], dtype=np.float32)
+            for config in self.agent_cams
         ]
         self.observation_space = gym.spaces.Dict({
             'color': gym.spaces.Tuple(color_tuple),
@@ -98,8 +97,6 @@ class Environment(gym.Env):
             high=np.array([0.75, 0.5, 0.28], dtype=np.float32),
             shape=(3,),
             dtype=np.float32)
-        self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
-
         self.action_space = gym.spaces.Dict({
             'pose0':
                 gym.spaces.Tuple(
@@ -130,7 +127,7 @@ class Environment(gym.Env):
         #         intArgs=[p.AddFileIOAction],
         #         physicsClientId=client)
 
-        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
+        self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_GUI, 1)
         self.pb_client.setPhysicsEngineParameter(enableFileCaching=0)
         self.pb_client.setAdditionalSearchPath(assets_root)
         self.pb_client.setAdditionalSearchPath(tempfile.gettempdir())
@@ -209,13 +206,13 @@ class Environment(gym.Env):
         self.pb_client.setGravity(0, 0, -9.8)
 
         # Temporarily disable rendering to load scene faster.
-        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
 
         pybullet_utils.load_urdf(self.pb_client, os.path.join(self.assets_root, PLANE_URDF_PATH),
                                  [0, 0, -0.001])
 
-        # pybullet_utils.load_urdf(
-        #     self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.00])
+        pybullet_utils.load_urdf(
+            self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.00])
 
         # Load UR5 robot arm equipped with suction end effector.
         # TODO(andyzeng): add back parallel-jaw grippers.
@@ -250,34 +247,29 @@ class Environment(gym.Env):
 
         # Re-enable rendering.
         self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_RENDERING, 1)
-
+        
+        # self.step_simulation()
         obs, _, _, _ = self.step()
         return obs
 
     def step(self, action=None):
         """Execute action with specified primitive.
-
         Args:
           action: action to execute.
-
         Returns:
           (obs, reward, done, info) tuple containing MDP step data.
         """
         if action is not None:
-            timeout = self.task.primitive(self.movej, self.movep,
-                                          self.ee, action['pose0'],
-                                          action['pose1'],
-                                          navigator = self.locobot.move_to_discrete,
-                                          turn = self.locobot.turn_to_point)
+            timeout = self.task.primitive(self.movej, self.movep, self.ee, action['pose0'], action['pose1'])
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
             if timeout:
                 obs = {'color': (), 'depth': ()}
-                # for config in self.agent_cams:
-                color, depth, _ = self.render_camera(config)
-                obs['color'] += (color,)
-                obs['depth'] += (depth,)
+                for config in self.agent_cams:
+                    color, depth, _ = self.render_camera(config)
+                    obs['color'] += (color,)
+                    obs['depth'] += (depth,)
                 return obs, 0.0, True, self.info
 
         # Step simulator asynchronously until objects settle.
@@ -310,65 +302,60 @@ class Environment(gym.Env):
         color, _, _ = self.render_camera()
         return color
 
-    def render_camera(self, config = None, image_size=None, shadow=1):
+    def render_camera(self, config, image_size=None, shadow=1):
         """Render RGB-D image with specified camera configuration."""
-        # if not image_size:
-        #     image_size = config['image_size']
-
-        color, depth, segm = self.locobot.get_fp_images()
-        # color = cv2.resize(color, image_size, interpolation=cv2.INTER_AREA)
-        # depth = cv2.resize(depth, image_size, interpolation=cv2.INTER_AREA)
-        return color, depth, segm
+        if not image_size:
+            image_size = config['image_size']
 
         # OpenGL camera settings.
-        # lookdir = np.float32([0, 0, 1]).reshape(3, 1)
-        # updir = np.float32([0, -1, 0]).reshape(3, 1)
-        # rotation = p.getMatrixFromQuaternion(config['rotation'])
-        # rotm = np.float32(rotation).reshape(3, 3)
-        # lookdir = (rotm @ lookdir).reshape(-1)
-        # updir = (rotm @ updir).reshape(-1)
-        # lookat = config['position'] + lookdir
-        # focal_len = config['intrinsics'][0]
-        # znear, zfar = config['zrange']
-        # viewm = p.computeViewMatrix(config['position'], lookat, updir)
-        # fovh = (image_size[0] / 2) / focal_len
-        # fovh = 180 * np.arctan(fovh) * 2 / np.pi
+        lookdir = np.float32([0, 0, 1]).reshape(3, 1)
+        updir = np.float32([0, -1, 0]).reshape(3, 1)
+        rotation = p.getMatrixFromQuaternion(config['rotation'])
+        rotm = np.float32(rotation).reshape(3, 3)
+        lookdir = (rotm @ lookdir).reshape(-1)
+        updir = (rotm @ updir).reshape(-1)
+        lookat = config['position'] + lookdir
+        focal_len = config['intrinsics'][0]
+        znear, zfar = config['zrange']
+        viewm = p.computeViewMatrix(config['position'], lookat, updir)
+        fovh = (image_size[0] / 2) / focal_len
+        fovh = 180 * np.arctan(fovh) * 2 / np.pi
 
-        # # Notes: 1) FOV is vertical FOV 2) aspect must be float
-        # aspect_ratio = image_size[1] / image_size[0]
-        # projm = p.computeProjectionMatrixFOV(fovh, aspect_ratio, znear, zfar)
+        # Notes: 1) FOV is vertical FOV 2) aspect must be float
+        aspect_ratio = image_size[1] / image_size[0]
+        projm = p.computeProjectionMatrixFOV(fovh, aspect_ratio, znear, zfar)
 
-        # # Render with OpenGL camera settings.
-        # _, _, color, depth, segm = p.getCameraImage(
-        #     width=image_size[1],
-        #     height=image_size[0],
-        #     viewMatrix=viewm,
-        #     projectionMatrix=projm,
-        #     shadow=shadow,
-        #     flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
-        #     renderer=p.ER_BULLET_HARDWARE_OPENGL)
+        # Render with OpenGL camera settings.
+        _, _, color, depth, segm = p.getCameraImage(
+            width=image_size[1],
+            height=image_size[0],
+            viewMatrix=viewm,
+            projectionMatrix=projm,
+            shadow=shadow,
+            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL)
 
-        # # Get color image.
-        # color_image_size = (image_size[0], image_size[1], 4)
-        # color = np.array(color, dtype=np.uint8).reshape(color_image_size)
-        # color = color[:, :, :3]  # remove alpha channel
-        # if config['noise']:
-        #     color = np.int32(color)
-        #     color += np.int32(self._random.normal(0, 3, image_size))
-        #     color = np.uint8(np.clip(color, 0, 255))
+        # Get color image.
+        color_image_size = (image_size[0], image_size[1], 4)
+        color = np.array(color, dtype=np.uint8).reshape(color_image_size)
+        color = color[:, :, :3]  # remove alpha channel
+        if config['noise']:
+            color = np.int32(color)
+            color += np.int32(self._random.normal(0, 3, image_size))
+            color = np.uint8(np.clip(color, 0, 255))
 
-        # # Get depth image.
-        # depth_image_size = (image_size[0], image_size[1])
-        # zbuffer = np.array(depth).reshape(depth_image_size)
-        # depth = (zfar + znear - (2. * zbuffer - 1.) * (zfar - znear))
-        # depth = (2. * znear * zfar) / depth
-        # if config['noise']:
-        #     depth += self._random.normal(0, 0.003, depth_image_size)
+        # Get depth image.
+        depth_image_size = (image_size[0], image_size[1])
+        zbuffer = np.array(depth).reshape(depth_image_size)
+        depth = (zfar + znear - (2. * zbuffer - 1.) * (zfar - znear))
+        depth = (2. * znear * zfar) / depth
+        if config['noise']:
+            depth += self._random.normal(0, 0.003, depth_image_size)
 
-        # # Get segmentation image.
-        # segm = np.uint8(segm).reshape(depth_image_size)
+        # Get segmentation image.
+        segm = np.uint8(segm).reshape(depth_image_size)
 
-        # return color, depth, segm
+        return color, depth, segm
 
     @property
     def info(self):
@@ -387,7 +374,8 @@ class Environment(gym.Env):
                 dim = self.pb_client.getVisualShapeData(obj_id)[0][3]
                 info[obj_id] = (pos, rot, dim)
 
-        info[self.bot_id] = self.locobot.get_base_pose()
+        info['bot_pose'] = self.locobot.get_base_pose()
+        info['bot_jpos'] = self.locobot.get_arm_jpos()
         info['lang_goal'] = self.get_lang_goal()
         return info
 
@@ -405,37 +393,33 @@ class Environment(gym.Env):
     # Robot Movement Functions
     # ---------------------------------------------------------------------------
 
-    def movej(self, targj, speed=0.01, timeout=5):
-        """Move UR5 to target joint configuration."""
-        if self.save_video:
-            timeout = timeout * 50
+     def movej(self, targj, tol=1e-2, speed=0.01, t_lim=5):
+        '''
+        Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
+        '''
+        success = False
 
-        self.locobot.move_arm(targj)
+        t0 = time.time()
+        while (time.time() - t0) < t_lim:
+        # for i in range(max_steps):
+            currj = np.array(self.locobot.get_arm_jpos())
+            diffj = targj - currj
 
-        # t0 = time.time()
-        # while (time.time() - t0) < timeout:
-        #     currj = [p.getJointState(self.ur5, i)[0] for i in self.joints]
-        #     currj = np.array(currj)
-        #     diffj = targj - currj
-        #     if all(np.abs(diffj) < 1e-2):
-        #         return False
+            if all(np.abs(diffj) < tol):
+                success = True
+                break
 
-        #     # Move with constant velocity
-        #     norm = np.linalg.norm(diffj)
-        #     v = diffj / norm if norm > 0 else 0
-        #     stepj = currj + v * speed
-        #     gains = np.ones(len(self.joints))
-        #     p.setJointMotorControlArray(
-        #         bodyIndex=self.ur5,
-        #         jointIndices=self.joints,
-        #         controlMode=p.POSITION_CONTROL,
-        #         targetPositions=stepj,
-        #         positionGains=gains)
-        #     self.step_counter += 1
-        #     self.step_simulation()
+            norm = np.linalg.norm(diffj)
+            v = diffj / norm if norm > 0 else 0
+            stepj = currj + v * speed
+            self.locobot.set_arm_jpos(stepj)
 
-        # print(f'Warning: movej exceeded {timeout} second timeout. Skipping.')
-        return True
+            self.step_simulation()
+
+        if not success:
+            print(f'Warning: movej exceeded {t_lim} second timeout. Skipping.')
+
+        return success
 
     def start_rec(self, video_filename):
         assert self.record_cfg
@@ -504,52 +488,130 @@ class Environment(gym.Env):
 
         self.video_writer.append_data(color)
 
-    def movep(self, pose, speed=0.01):
+    def movep(self, pose, speed=0.01, tol=1e-2):
         """Move UR5 to target end effector pose."""
-        return self.locobot.move_ee(pose[0], pose[1])
-        # targj = self.solve_ik(pose)
-        # return self.movej(targj, speed)
+        arm_joints_qs = self.locobt.jpos_from_ee_pose(pose[0], pose[1])
+        success = self.movej(arm_joints_qs, speed=speed, tol = tol)
+        return success
 
-    # def solve_ik(self, pose):
-    #     """Calculate joint configuration with inverse kinematics."""
-    #     joints = p.calculateInverseKinematics(
-    #         bodyUniqueId=self.ur5,
-    #         endEffectorLinkIndex=self.ee_tip,
-    #         targetPosition=pose[0],
-    #         targetOrientation=pose[1],
-    #         lowerLimits=[-3 * np.pi / 2, -2.3562, -17, -17, -17, -17],
-    #         upperLimits=[-np.pi / 2, 0, 17, 17, 17, 17],
-    #         jointRanges=[np.pi, 2.3562, 34, 34, 34, 34],  # * 6,
-    #         restPoses=np.float32(self.homej).tolist(),
-    #         maxNumIterations=100,
-    #         residualThreshold=1e-5)
-    #     joints = np.float32(joints)
-    #     joints[2:] = (joints[2:] + np.pi) % (2 * np.pi) - np.pi
-    #     return joints
+    def rotate_base(self, theta, relative = True, t_lim = 20, tol = 1e-3):
+        success = False
+        _, init_orientation = self.locobot.get_base_pose()
+        init_angle = self.pb_client.getEulerFromQuaternion(init_orientation)[-1]
+
+        if relative:
+            target_angle = init_angle + theta
+        else:
+            target_angle = theta
+
+        t0 = time.time()
+        while (time.time() - t0) < t_lim:
+            _, curr_orientation = self.locobot.get_base_pose()
+            curr_angle = self.pb_client.getEulerFromQuaternion(curr_orientation)[-1]
+
+            diffj = (target_angle - curr_angle)
+            diffj = ang_in_mpi_ppi(diffj)
+
+            if np.abs(diffj) < tol:
+                self.locobot.stop_base()
+                success = True
+                break
+
+            vel = self.wheel_default_rotate_vel
+            # if abs(diffj) < 0.75:
+            #     vel = 10.0
+            if abs(diffj) < 0.25:
+                vel = self.wheel_default_rotate_vel/2
+            if diffj > 0:
+                self.rotate_to_left(vel)
+            else:
+                self.rotate_to_right(vel)
+
+            self.step_simulation()
+
+        for _ in range(10):
+            self.step_simulation()
+
+        return success
+
+    def move_to(self, target_position, t_lim = 100,
+                tol = 0.1, direction_error_threshold = np.pi/6,
+                skip_starting_rotation = False):
+
+        success = False
+
+        currj = np.array(self.locobot.get_base_pose()[0][:2])
+        dx, dy = target_position - currj
+        target_direction = np.arctan2(dy, dx)
+
+        if not skip_starting_rotation:
+            self.rotate_base(target_direction, relative = False)
+
+        t0 = time.time()
+        while (time.time() - t0) < t_lim:
+            currj = np.array(self.locobot.get_base_pose()[0][:2])
+            diffj = target_position - currj
+
+            if np.linalg.norm(diffj) < tol:
+                self.stop_base()
+                success = True
+                break
+
+            ##############  Check if the bot deviated ##############
+            dx, dy = diffj
+            target_direction = np.arctan2(dy, dx)
+
+            current_direction = self.pb_client.getEulerFromQuaternion(
+                self.env.pb_client.getBasePositionAndOrientation(self.bot)[1])[-1]
+
+            sin_direction_error = np.abs(np.sin(target_direction - current_direction))
+            if (sin_direction_error > np.sin(direction_error_threshold)):
+                self.rotate_base(target_direction, relative = False)
+
+            #########################################################
+            norm = np.linalg.norm([dx, dy])
+            vel = self.wheel_default_forward_vel
+            if norm < 0.75:
+                vel = self.wheel_default_forward_vel/2
+            if norm < 0.2:
+                vel = 10.0
+            self.base_forward(vel)
+            self.step_simulation()
+
+        for _ in range(10):
+            self.step_simulation()
+
+        return success
+
+    def set_camera_navigation_mode(self):
+        self.locobot.set_locobot_camera_tilt(
+                self.locobot.navigation_cam_tilt)
+        self.step_simulation()
+
+    def set_camera_grasp_mode(self):
+        self.locobot.set_locobot_camera_tilt(
+                self.locobot.grasping_cam_tilt)
+        self.step_simulation()
+
+    def turn_to_point(self, pos, tol = np.pi/6):
+        bot_pos = self.locobot.get_base_pose()[0][:2]
+        dx, dy = np.array(pos) - np.array(bot_pos)
+        theta = np.arctan2(dy, dx)
+        self.rotate_base(theta, relative = False, tol = tol)
+
+    # ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
 
     def _get_obs(self):
         # Get RGB-D camera image observations.
         obs = {'color': (), 'depth': ()}
-        # for config in self.agent_cams:
-        color, depth, _ = self.render_camera()
-        obs['color'] += (color,)
-        obs['depth'] += (depth,)
+        for config in self.agent_cams:
+            color, depth, _ = self.render_camera(config)
+            obs['color'] += (color,)
+            obs['depth'] += (depth,)
 
         return obs
-
-    def _get_img_from_obs(self, obs):
-        cam_config = self.locobot.get_camera_config()
-
-        # Get color and height maps from RGB-D images.
-        cmap, hmap = utils.get_fused_heightmap(
-            obs, cam_config, self.bounds, self.pix_size)
-        img = np.concatenate((cmap,
-                              hmap[Ellipsis, None],
-                              hmap[Ellipsis, None],
-                              hmap[Ellipsis, None]), axis=2)
-        # assert img.shape == self.in_shape, img.shape
-        return img
-
+        
 class EnvironmentNoRotationsWithHeightmap(Environment):
     """Environment that disables any rotations and always passes [0, 0, 0, 1]."""
 

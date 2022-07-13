@@ -15,7 +15,7 @@ import pdb
 
 # See transporter.py, regression.py, dummy.py, task.py, etc.
 PIXEL_SIZE = 0.003125
-# CAMERA_CONFIG = cameras.RealSenseD415.CONFIG
+CAMERA_CONFIG = cameras.RealSenseD415.CONFIG
 BOUNDS = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
 
 # Names as strings, REVERSE-sorted so longer (more specific) names are first.
@@ -43,7 +43,7 @@ class RavensDataset(Dataset):
         self.pix_size = 0.003125
         self.depth_scale = 1000.0
         self.in_shape = (320, 160, 6)
-        # self.cam_config = cameras.RealSenseD415.CONFIG
+        self.cam_config = cameras.RealSenseD415.CONFIG
         self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
 
         # Track existing dataset if it exists.

@@ -59,9 +59,10 @@ class Locobot:
 
         self.arm_joints = [13, 14, 15, 16, 17]  # Arm joints
         # self.gripper_joints = [18, 19]  # Left and right
-        self.ee_link = 20  # Link to which ee is attached
-        self.camera_link = 24
-        self.camera_motor_joints = [22, 23]
+        self.ee_link = self.arm_joints[-1]  # Link to which ee is attached
+        self.ee_tip = self.ee_link + 1
+        self.camera_link = 22
+        self.camera_motor_joints = [20, 21]
 
         # some configurations for the joints
         self.homej = np.array([np.pi/2, np.pi/4, -np.pi/4, np.pi/2, 0])  # default config for arm
@@ -99,24 +100,19 @@ class Locobot:
         camera_offset2 = R.from_rotvec(-np.array([0, 0, 1]) * np.pi / 2)
         self.cam_offset = np.dot(camera_offset1.as_matrix(), camera_offset2.as_matrix())
 
+        fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose()
+        # first-person camera
+        self.fp_cam = self.create_camera(pos=fp_cam_pos, ori=fp_cam_ori)
+
     def reset(self):
         self.discrete_steps_taken = 0
         self.step_simulation_calls = 0
 
         for i in range(len(self.arm_joints)):
             self.env.pb_client.resetJointState(self.bot, self.arm_joints[i], self.homej[i])
-        # self.open_gripper()
         self.set_camera_grasp_mode()
-
-        # self._setup_base()
-        # self._setup_gripper()
         self.set_locobot_camera_pan_tilt(0., 0.6)
-        fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose()
-        # first-person camera
-        self.fp_cam = self.create_camera(pos=fp_cam_pos, ori=fp_cam_ori)
-
-
-        self.forward_simulation()
+        # self.forward_simulation()
 
     def get_fp_images(self):
         # print('entered fp images')
@@ -318,424 +314,42 @@ class Locobot:
             maxNumIterations=100,
             residualThreshold=1e-5)
         arm_joints_qs = np.array(joints[2:7])
+        arm_joints_qs = ang_in_mpi_ppi(arm_joints_qs)
+        if (arm_joints_qs[-1] > np.pi/2):
+            arm_joints_qs[-1] -= np.pi
+        if (arm_joints_qs[-1] < -np.pi/2):
+            arm_joints_qs[-1] += np.pi
         return arm_joints_qs
 
-    # def close_gripper(self):
-    #     self.set_gripper_jpos(self.close_ee_config)
-    #
-    # def open_gripper(self):
-    #     self.set_gripper_jpos(self.open_ee_config)
 
-    def get_bodies_in_gripper(self):
-        contact_points_left = self.env.pb_client.getContactPoints(bodyA = self.bot,
-                                            linkIndexA = self.gripper_joints[0])
-        bodies_in_contact_left = [contact[2] for contact in contact_points_left]
-        contact_points_right = self.env.pb_client.getContactPoints(bodyA = self.bot,
-                                            linkIndexA = self.gripper_joints[1])
-        bodies_in_contact_right = [contact[2] for contact in contact_points_right]
-        bodies = set([*bodies_in_contact_left, *bodies_in_contact_right])
-        bodies = bodies.difference({self.bot})
-        return bodies
+    # def movep(self, position, orientation, speed = 0.05, tol = 1e-3):
+    #     arm_joints_qs = self.jpos_from_ee_pose(position, orientation)
+    #     success = self.move_arm(arm_joints_qs, tol = tol)
+    #     return success
 
-    def get_gripper_state(self):
-        '''
-        TO DO - (this will never return state 1 currently)
-        from PyRobot
-        :return: state
-                 state = -1: unknown gripper state
-                 state = 0: gripper is fully open
-                 state = 1: gripper is closing
-                 state = 2: there is an object in the gripper
-                 state = 3: gripper is fully closed
-        :rtype: int
-        '''
-        jpos = self.get_gripper_jpos()
-        d = jpos[1] - jpos[0]
-        d_closed = self.close_ee_config.dot(np.array([-1,1]))
-        d_opened = self.open_ee_config.dot(np.array([-1,1]))
-
-        bodies = self.get_bodies_in_gripper()
-
-        if len(bodies) == 1:
-            return 2
-        elif len(bodies) > 1:
-            return -1
-
-        elif d > self.ee_half_width:
-            return 0
-        else:
-            return 3
-        # if (abs(d - d_opened) <= 1e-3):
-        #     return 0
-        # elif (abs(d - d_closed) <= 1e-3):
-        #     return 3
-        # elif d < d_opened:
-        #     return 2
-        # return -1
-
-    def rotate_base(self, theta, relative = True, t_lim = 20, tol = 1e-3):
-
-        success = False
-        _, init_orientation = self.env.pb_client.getBasePositionAndOrientation(self.bot)
-        # init_angle = tf.euler_from_quaternion(init_orientation)[0]
-        init_angle = self.env.pb_client.getEulerFromQuaternion(init_orientation)[-1]
-
-        if relative:
-            target_angle = init_angle + theta
-        else:
-            target_angle = theta
-
-        t0 = time.time()
-        while (time.time() - t0) < t_lim:
-            _, curr_orientation = self.env.pb_client.getBasePositionAndOrientation(self.bot)
-            # curr_angle = tf.euler_from_quaternion(curr_orientation)[0]
-            curr_angle = self.env.pb_client.getEulerFromQuaternion(curr_orientation)[-1]
-
-            diffj = (target_angle - curr_angle)
-            diffj = ang_in_mpi_ppi(diffj)
-
-            if np.abs(diffj) < tol:
-                self.stop_base()
-                success = True
-                self.forward_simulation(20)
-                break
-
-            vel = self.wheel_default_rotate_vel
-            if abs(diffj) < 0.75:
-                vel = self.wheel_default_rotate_vel/2
-            if abs(diffj) < 0.25:
-                vel = 10.0
-            if diffj > 0:
-                self.rotate_to_left(vel)
-                # self.rotate_to_left()
-            else:
-                self.rotate_to_right(vel)
-                # self.rotate_to_right()
-
-            self.forward_simulation()
-
-        return success
-
-    def move_to(self, target_position, t_lim = 100,
-                tol = 0.1, direction_error_threshold = np.deg2rad(30),
-                skip_starting_rotation = False):
-
-        success = False
-
-        currj = np.array(self.env.pb_client.getBasePositionAndOrientation(self.bot)[0][:2])
-        dx, dy = target_position - currj
-        target_direction = np.arctan2(dy, dx)
-
-        print('inside move to', dx, dy)
-        ## Reseting the initial direction to point towards the target
-        if not skip_starting_rotation:
-            self.rotate_base(target_direction, relative = False)
-
-        ## Setting the velocity proportional to distance, but less than max_speed
-        t0 = time.time()
-        while (time.time() - t0) < t_lim:
-            currj = np.array(self.env.pb_client.getBasePositionAndOrientation(self.bot)[0][:2])
-            diffj = target_position - currj
-
-            if np.linalg.norm(diffj) < tol:
-                self.stop_base()
-                self.forward_simulation(20)
-                success = True
-                break
-
-            ##############  Check if the bot deviated ##############
-            dx, dy = diffj
-            target_direction = np.arctan2(dy, dx)
-            # current_direction = tf.euler_from_quaternion(
-            #     p.getBasePositionAndOrientation(self.bot)[1])[0]
-            current_direction = self.env.pb_client.getEulerFromQuaternion(
-                self.env.pb_client.getBasePositionAndOrientation(self.bot)[1])[-1]
-
-            sin_direction_error = np.abs(np.sin(target_direction - current_direction))
-            if (sin_direction_error > np.sin(direction_error_threshold)):
-                self.rotate_base(target_direction, relative = False)
-
-            #########################################################
-            norm = np.linalg.norm([dx, dy])
-            vel = self.wheel_default_forward_vel
-            if norm < 0.75:
-                vel = self.wheel_default_forward_vel/2
-            if norm < 0.2:
-                vel = 10.0
-            self.base_forward(vel)
-            self.forward_simulation()
-
-        return success
-
-
-    # def move_arm(self, targj, tol = 1e-3, max_steps = 100, t_lim = 5):
-    #     '''
-    #     Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
-    #     '''
+    # def move_gripper(self, targj, tol = 1e-3, max_steps = 50, t_lim = 5):
     #     success = False
-    #
+
     #     # t0 = time.time()
     #     # while (time.time() - t0) < t_lim:
     #     for i in range(max_steps):
-    #         self.set_arm_jpos(targj)
+    #         self.set_gripper_jpos(targj)
     #         self.forward_simulation(1)
-    #
-    #         currj = [self.env.pb_client.getJointState(self.bot, i)[0] for i in self.arm_joints]
+    #         currj = [self.env.pb_client.getJointState(self.bot, i)[0] for i in self.gripper_joints]
     #         currj = np.array(currj)
     #         diffj = targj - currj
     #         if all(np.abs(diffj) < tol):
     #             success = True
     #             break
-    #
+
     #     return success
 
-    def move_arm(self, targj, tol = 1e-3, max_steps = 100, t_lim = 5):
-        '''
-        Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
-        '''
-        success = False
+    # def forward_simulation(self, nsteps = 1):
+    #     # return None
+    #     self.env.step_simulation()
+    #     # self.step_simulation_calls += nsteps
+    #     # for i in range(nsteps):
+    #     #     self.env.pb_client.stepSimulation()
 
-        speed = 0.8
-        t0 = time.time()
-        while (time.time() - t0) < t_lim:
-        # for i in range(max_steps):
-            currj = [self.env.pb_client.getJointState(self.bot, i)[0] for i in self.arm_joints]
-            currj = np.array(currj)
-            diffj = targj - currj
 
-            if all(np.abs(diffj) < tol):
-                success = True
-                break
-            new_targj = currj + speed*diffj
-            self.set_arm_jpos(new_targj)
-            self.forward_simulation(1)
 
-        return success
-
-    def move_ee(self, position, orientation, speed = 0.05, tol = 1e-3):
-        arm_joints_qs = self.jpos_from_ee_pose(position, orientation)
-
-        if (arm_joints_qs[-1] > np.pi/2):
-            arm_joints_qs[-1] -= np.pi
-        if (arm_joints_qs[-1] < -np.pi/2):
-            arm_joints_qs[-1] += np.pi
-
-        success = self.move_arm(arm_joints_qs, tol = tol)
-        return success
-
-    def move_gripper(self, targj, tol = 1e-3, max_steps = 50, t_lim = 5):
-        success = False
-
-        # t0 = time.time()
-        # while (time.time() - t0) < t_lim:
-        for i in range(max_steps):
-            self.set_gripper_jpos(targj)
-            self.forward_simulation(1)
-            currj = [self.env.pb_client.getJointState(self.bot, i)[0] for i in self.gripper_joints]
-            currj = np.array(currj)
-            diffj = targj - currj
-            if all(np.abs(diffj) < tol):
-                success = True
-                break
-
-        return success
-
-    def close_gripper(self, grasp_object = None):
-        return self.move_gripper(self.close_ee_config)
-
-    def open_gripper(self, grasp_object = None):
-        return self.move_gripper(self.open_ee_config)
-
-    def forward_simulation(self, nsteps = 1):
-        # return None
-        self.env.step_simulation()
-        # self.step_simulation_calls += nsteps
-        # for i in range(nsteps):
-        #     self.env.pb_client.stepSimulation()
-
-##-----------------------------------------------------------------------------------------------
-##                 discrete navigation functions
-##-----------------------------------------------------------------------------------------------
-
-    def absolute_from_relative(self, distance):
-        pos, ori = self.get_base_pose()
-        # theta = tf.euler_from_quaternion(ori)[0]
-        theta = self.env.pb_client.getEulerFromQuaternion(ori)[-1]
-        target = np.array(pos[:2]) + distance*np.array([np.cos(theta), np.sin(theta)])
-        return target
-
-    def move_forward_short(self):
-        self.base_forward()
-        self.forward_simulation(nsteps = self.time_short)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-
-        self.discrete_steps_taken += 1
-
-    def move_forward_long(self):
-        self.base_forward()
-        self.forward_simulation(nsteps = self.time_long)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-        self.discrete_steps_taken += 1
-
-    def move_backward_short(self): # TODO
-        self.base_backward()
-        self.forward_simulation(nsteps = self.time_short)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-        self.discrete_steps_taken += 1
-
-    def move_backward_long(self): # TODO
-        self.base_backward()
-        self.forward_simulation(nsteps = self.time_long)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-        self.discrete_steps_taken += 1
-
-    def move_left_short(self):
-        self.rotate_to_left()
-        self.forward_simulation(nsteps = self.time_rotate_short)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-        self.discrete_steps_taken += 1
-
-    def move_left_long(self):
-        self.rotate_to_left()
-        self.forward_simulation(nsteps = self.time_rotate_long)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-        self.discrete_steps_taken += 1
-
-    def move_right_short(self):
-        self.rotate_to_right()
-        self.forward_simulation(nsteps = self.time_rotate_short)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-        self.discrete_steps_taken += 1
-
-    def move_right_long(self):
-        self.rotate_to_right()
-        self.forward_simulation(nsteps = self.time_rotate_long)
-        self.stop_base()
-        self.forward_simulation(nsteps = 40)
-        self.discrete_steps_taken += 1
-
-##---------------------------------------------------------------------------------
-##        rotate and move actions using the elementary actions
-##---------------------------------------------------------------------------------
-
-    def rotate_base_discrete(self, theta,
-                             relative = True,
-                             tol = 2e-1,
-                             long_action_tol = 0.7,
-                             max_iters = 30):
-        success = False
-        _, init_orientation = self.env.pb_client.getBasePositionAndOrientation(self.bot)
-        # init_angle = tf.euler_from_quaternion(init_orientation)[0]
-        init_angle = self.env.pb_client.getEulerFromQuaternion(init_orientation)[-1]
-
-        if relative:
-            target_angle = init_angle + theta
-        else:
-            target_angle = theta
-
-        for i in range(max_iters):
-            # print(f'inside rotation, iteration {i}')
-            _, curr_orientation = self.env.pb_client.getBasePositionAndOrientation(self.bot)
-            # curr_angle = tf.euler_from_quaternion(curr_orientation)[0]
-            curr_angle = self.env.pb_client.getEulerFromQuaternion(curr_orientation)[-1]
-
-            diffj = (target_angle - curr_angle)
-            diffj = ang_in_mpi_ppi(diffj)
-
-            if np.abs(diffj) < tol:
-                success = True
-                break
-
-            elif np.abs(diffj) < long_action_tol:
-                # print('Rotate short action')
-                if diffj > 0:
-                    self.move_left_short()
-                else:
-                    self.move_right_short()
-
-            else:
-                # print('rotate long action')
-                if diffj > 0:
-                    self.move_left_long()
-                else:
-                    self.move_right_long()
-
-        # print('exiting rotation')
-        print('Number of steps:', self.discrete_steps_taken)
-        return success
-
-    def move_to_discrete(self, target_position, skip_starting_rotation = False,
-                         direction_error_threshold = np.pi/3,
-                         tol = 0.4, long_action_tol = 0.5, max_iters = 50):
-        success = False
-
-        # print('Obtaining current position')
-        currj = np.array(self.env.pb_client.getBasePositionAndOrientation(self.bot)[0][:2])
-        dx, dy = target_position - currj
-        target_direction = np.arctan2(dy, dx)
-
-        ## Reseting the initial direction to point towards the target
-        # print('Rotating towards object')
-        if not skip_starting_rotation:
-            self.rotate_base_discrete(target_direction, relative = False, tol = 2e-1)
-
-        ## Setting the velocity proportional to distance, but less than max_speed
-        for _ in range(max_iters):
-            currj = np.array(self.env.pb_client.getBasePositionAndOrientation(self.bot)[0][:2])
-            diffj = target_position - currj
-
-            if np.linalg.norm(diffj) < tol:
-                success = True
-                break
-
-            ##############  Check if the bot deviated ##############
-            dx, dy = diffj
-            target_direction = np.arctan2(dy, dx)
-            # current_direction = tf.euler_from_quaternion(
-            #     self.env.pb_client.getBasePositionAndOrientation(self.bot)[1])[0]
-            current_direction = self.env.pb_client.getEulerFromQuaternion(
-                self.env.pb_client.getBasePositionAndOrientation(self.bot)[1])[-1]
-
-            sin_direction_error = np.abs(np.sin(target_direction - current_direction))
-            if (sin_direction_error > np.sin(direction_error_threshold)):
-                # print('Rotating towards object again')
-                self.rotate_base_discrete(target_direction, relative = False, tol = 2e-1)
-
-            norm = np.linalg.norm(diffj)
-
-            # print('Moving towards object actions')
-            if norm < long_action_tol:
-                self.move_forward_short()
-            else:
-                self.move_forward_long()
-
-        print('Number of steps:', self.discrete_steps_taken)
-        return success
-
-    def turn_to_object(self, object, tol = np.pi/4):
-        object_pos = self.env.pb_client.getBasePositionAndOrientation(object)[0][:2]
-        bot_pos = self.get_base_pose()[0][:2]
-        dx, dy = np.array(object_pos) - np.array(bot_pos)
-        theta = np.arctan2(dy, dx)
-        self.rotate_base_discrete(theta, relative = False, tol = tol)
-
-    def turn_to_point(self, pos, tol = np.pi/4):
-        bot_pos = self.get_base_pose()[0][:2]
-        dx, dy = np.array(pos) - np.array(bot_pos)
-        theta = np.arctan2(dy, dx)
-        self.rotate_base(theta, relative = False, tol = tol)
-
-    def set_camera_navigation_mode(self):
-        self.set_locobot_camera_tilt(self.navigation_cam_tilt)
-        self.forward_simulation(1)
-
-    def set_camera_grasp_mode(self):
-        self.set_locobot_camera_tilt(self.grasping_cam_tilt)
-        self.forward_simulation(1)
