@@ -12,14 +12,14 @@ class PickPlace():
 
     def __call__(self, movej, movep, ee, pose0, pose1):
         """Execute pick and place primitive.
-    
+
         Args:
           movej: function to move robot joints.
           movep: function to move robot end effector pose.
           ee: robot end effector.
           pose0: SE(3) picking pose.
           pose1: SE(3) placing pose.
-    
+
         Returns:
           timeout: robot movement timed out if True.
         """
@@ -76,8 +76,11 @@ class LocobotPickPlace():
     def __init__(self, height=0.32, speed=0.01):
         self.height, self.speed = height, speed
 
-    def __call__(self, movej, movep, ee, pose0, pose1, navigator = None):
+    def __call__(self, movej, movep, ee, pose0, pose1, navigator = None, turn = None):
         pick_pose, place_pose = pose0, pose1
+
+        print(f'pick pose: {pick_pose}, place_pose: {place_pose}')
+        input()
 
         # Execute picking primitive.
         prepick_to_pick = ((0, 0, 0.32), (0, 0, 0, 1))
@@ -86,6 +89,8 @@ class LocobotPickPlace():
         postpick_pose = utils.multiply(pick_pose, postpick_to_pick)
         if navigator is not None:
             navigator(prepick_pose[0][:2], tol = 0.4)
+            if turn is not None:
+                turn(prepick_pose[0][:2], tol = np.pi/4)
         timeout = movep(prepick_pose)
 
         # Move towards pick pose until contact is detected.
@@ -112,8 +117,8 @@ class LocobotPickPlace():
             targ_pose = preplace_pose
             while not ee.detect_contact():
                 targ_pose = utils.multiply(targ_pose, delta)
-                if navigate is not None:
-                    navigate(targ_pose[0][:2], tol = 0.4)
+                if navigator is not None:
+                    navigator(targ_pose[0][:2], tol = 0.4)
                 timeout |= movep(targ_pose, self.speed)
                 if timeout:
                     return True
@@ -129,14 +134,14 @@ class LocobotPickPlace():
 
 def push(movej, movep, ee, pose0, pose1):  # pylint: disable=unused-argument
     """Execute pushing primitive.
-  
+
     Args:
       movej: function to move robot joints.
       movep: function to move robot end effector pose.
       ee: robot end effector.
       pose0: SE(3) starting pose.
       pose1: SE(3) ending pose.
-  
+
     Returns:
       timeout: robot movement timed out if True.
     """

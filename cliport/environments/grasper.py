@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 # from pyb_utils.collision import NamedCollisionObject, CollisionDetector
 from PIL import Image
 
-
 class Grasper:
     def __init__(self, env):
         self.env = env
@@ -39,7 +38,7 @@ class Grasper:
 
     def compute_pick(self, object_id):
         object_position, object_ori = self.get_object_pose(object_id)
-        pick_position = [*object_position[:2], object_position[2] + 0.1]
+        pick_position = [*object_position[:2], object_position[2] + 0.05]
 
         return pick_position
 
@@ -69,12 +68,6 @@ class Grasper:
         self.env.bot.set_camera_grasp_mode()
 
         success = self.env.bot.move_arm(self.env.bot.actionj)
-        # print(f'Move arm to action pose: {success}')
-
-        # print('inside gapser execute grasp:')
-        # print(f'    objects: {objects}')
-
-        # self.env.get_object_positions()
 
         for _ in range(num_tries):
             object_id = self.get_nearest_object(objects = objects)
@@ -82,46 +75,29 @@ class Grasper:
                 return False
 
             pre_pick_pos, pre_pick_ori = self.compute_pre_pick(object_id)
-            # print(f'    pre-pick pose: {pre_pick_pos}')
             success = self.env.bot.move_ee(pre_pick_pos, pre_pick_ori, tol = 1e-2)
-            # print(f'Move ee to pre pose: {success}')
 
-            self.env.bot.open_gripper()
-            # print(f'Open gripper: {success}')
-
+            # self.env.bot.open_gripper()
             pick_pos = self.compute_pick(object_id)
-            # print(f'    pick pose: {pick_pos}')
             success = self.env.bot.move_ee(pick_pos, pre_pick_ori)
-            # print(f'Move ee to pick pose: {success}')
-
-            self.env.bot.close_gripper()
-            # print(f'Close gripper: {success}')
+            self.env.task.ee.activate()
 
             success = self.env.bot.move_ee(pre_pick_pos, pre_pick_ori, tol = 1e-2)
-            # print(f'Move ee to post pose: {success}')
 
             gripper_state = self.env.bot.get_gripper_state()
             if not (gripper_state == 2):
-                # input('Press Enter to continue')
                 continue
 
             self.env.bot.move_arm(self.env.bot.homej)
-            # print(f'Move arm to home pose: {success}')
+            # self.env.bot.close_gripper()
 
-            self.env.bot.close_gripper()
-            # print(f'Close gripper: {success}')
-
-            # self.env.forward_simulation(10)
             self.env.bot.set_camera_navigation_mode()
 
-            gripper_state = self.env.bot.get_gripper_state()
-            if gripper_state == 2:
-                # print(f'Gripper state: {gripper_state}, Object grasped successfully')
-                return True
+            # gripper_state = self.env.bot.get_gripper_state()
+            # if gripper_state == 2:
+            #     return True
 
-            # input('Press Enter to continue')
-
-        # print(f'Gripper state: {gripper_state}, Grasp failed')
+        return True
         return False
 
     def is_object_grasped(self):

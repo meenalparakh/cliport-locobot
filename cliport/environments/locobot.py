@@ -59,12 +59,12 @@ class Locobot:
 
         self.arm_joints = [13, 14, 15, 16, 17]  # Arm joints
         # self.gripper_joints = [18, 19]  # Left and right
-        self.ee_link = 19  # Link to which ee is attached
+        self.ee_link = 20  # Link to which ee is attached
         self.camera_link = 24
         self.camera_motor_joints = [22, 23]
 
         # some configurations for the joints
-        self.homej = np.array([np.pi/2, 0, 0, np.pi/2, 0])  # default config for arm
+        self.homej = np.array([np.pi/2, np.pi/4, -np.pi/4, np.pi/2, 0])  # default config for arm
         self.actionj = np.array([0, 0, -np.pi/12, np.pi/2, 0])
 
         self.navigation_cam_tilt = NAVIGATION_CAM_TILT
@@ -106,7 +106,7 @@ class Locobot:
         for i in range(len(self.arm_joints)):
             self.env.pb_client.resetJointState(self.bot, self.arm_joints[i], self.homej[i])
         # self.open_gripper()
-        self.set_camera_navigation_mode()
+        self.set_camera_grasp_mode()
 
         # self._setup_base()
         # self._setup_gripper()
@@ -404,7 +404,7 @@ class Locobot:
             if abs(diffj) < 0.75:
                 vel = self.wheel_default_rotate_vel/2
             if abs(diffj) < 0.25:
-                vel = 5.0
+                vel = 10.0
             if diffj > 0:
                 self.rotate_to_left(vel)
                 # self.rotate_to_left()
@@ -426,6 +426,7 @@ class Locobot:
         dx, dy = target_position - currj
         target_direction = np.arctan2(dy, dx)
 
+        print('inside move to', dx, dy)
         ## Reseting the initial direction to point towards the target
         if not skip_starting_rotation:
             self.rotate_base(target_direction, relative = False)
@@ -460,12 +461,33 @@ class Locobot:
             if norm < 0.75:
                 vel = self.wheel_default_forward_vel/2
             if norm < 0.2:
-                vel = 2.0
+                vel = 10.0
             self.base_forward(vel)
             self.forward_simulation()
 
         return success
 
+
+    # def move_arm(self, targj, tol = 1e-3, max_steps = 100, t_lim = 5):
+    #     '''
+    #     Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
+    #     '''
+    #     success = False
+    #
+    #     # t0 = time.time()
+    #     # while (time.time() - t0) < t_lim:
+    #     for i in range(max_steps):
+    #         self.set_arm_jpos(targj)
+    #         self.forward_simulation(1)
+    #
+    #         currj = [self.env.pb_client.getJointState(self.bot, i)[0] for i in self.arm_joints]
+    #         currj = np.array(currj)
+    #         diffj = targj - currj
+    #         if all(np.abs(diffj) < tol):
+    #             success = True
+    #             break
+    #
+    #     return success
 
     def move_arm(self, targj, tol = 1e-3, max_steps = 100, t_lim = 5):
         '''
@@ -473,18 +495,20 @@ class Locobot:
         '''
         success = False
 
-        # t0 = time.time()
-        # while (time.time() - t0) < t_lim:
-        for i in range(max_steps):
-            self.set_arm_jpos(targj)
-            self.forward_simulation(1)
-
+        speed = 0.8
+        t0 = time.time()
+        while (time.time() - t0) < t_lim:
+        # for i in range(max_steps):
             currj = [self.env.pb_client.getJointState(self.bot, i)[0] for i in self.arm_joints]
             currj = np.array(currj)
             diffj = targj - currj
+
             if all(np.abs(diffj) < tol):
                 success = True
                 break
+            new_targj = currj + speed*diffj
+            self.set_arm_jpos(new_targj)
+            self.forward_simulation(1)
 
         return success
 
@@ -694,6 +718,19 @@ class Locobot:
 
         print('Number of steps:', self.discrete_steps_taken)
         return success
+
+    def turn_to_object(self, object, tol = np.pi/4):
+        object_pos = self.env.pb_client.getBasePositionAndOrientation(object)[0][:2]
+        bot_pos = self.get_base_pose()[0][:2]
+        dx, dy = np.array(object_pos) - np.array(bot_pos)
+        theta = np.arctan2(dy, dx)
+        self.rotate_base_discrete(theta, relative = False, tol = tol)
+
+    def turn_to_point(self, pos, tol = np.pi/4):
+        bot_pos = self.get_base_pose()[0][:2]
+        dx, dy = np.array(pos) - np.array(bot_pos)
+        theta = np.arctan2(dy, dx)
+        self.rotate_base(theta, relative = False, tol = tol)
 
     def set_camera_navigation_mode(self):
         self.set_locobot_camera_tilt(self.navigation_cam_tilt)

@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from cliport.tasks import cameras
 from cliport.tasks import primitives
-from cliport.tasks.grippers import Suction
+from cliport.tasks.grippers import Suction, LocobotSuction
 from cliport.utils import utils
 
 # import pybullet as p
@@ -110,30 +110,42 @@ class Task():
             # Filter out matched objects.
             order = [i for i in order if nn_dists[i] > 0]
 
-            pick_mask = None
-            for pick_i in order:
-                pick_mask = np.uint8(obj_mask == objs[pick_i][0])
+            ##------------------------------------------------------------------------------
+            # pick_mask = None
+            # for pick_i in order:
+            #     pick_mask = np.uint8(obj_mask == objs[pick_i][0])
+            #
+            #     # Erode to avoid picking on edges.
+            #     # pick_mask = cv2.erode(pick_mask, np.ones((3, 3), np.uint8))
+            #
+            #     if np.sum(pick_mask) > 0:
+            #         break
+            #
+            # # import pdb; pdb.set_trace()
+            # # while True:
+            # #     env.locobot.get_fp_images()
+            # #     env.step_simulation()
+            #
+            # # Trigger task reset if no object is visible.
+            # if pick_mask is None or np.sum(pick_mask) == 0:
+            #     self.goals = []
+            #     self.lang_goals = []
+            #     print('Object for pick is not visible. Skipping demonstration.')
+            #     return
+            #
+            # # Get picking pose.
+            # pick_prob = np.float32(pick_mask)
+            # pick_pix = utils.sample_distribution(pick_prob)
+            # # For "deterministic" demonstrations on insertion-easy, use this:
+            # # pick_pix = (160,80)
+            # pick_pos = utils.pix_to_xyz(pick_pix, hmap,
+            #                             self.bounds, self.pix_size)
+            ##------------------------------------------------------------------------------
 
-                # Erode to avoid picking on edges.
-                # pick_mask = cv2.erode(pick_mask, np.ones((3, 3), np.uint8))
+            pick_i = 0
+            print('objs', objs, 'order', order)
+            pick_pos = env.pb_client.getBasePositionAndOrientation(objs[order[pick_i]][0])[0]
 
-                if np.sum(pick_mask) > 0:
-                    break
-
-            # Trigger task reset if no object is visible.
-            if pick_mask is None or np.sum(pick_mask) == 0:
-                self.goals = []
-                self.lang_goals = []
-                print('Object for pick is not visible. Skipping demonstration.')
-                return
-
-            # Get picking pose.
-            pick_prob = np.float32(pick_mask)
-            pick_pix = utils.sample_distribution(pick_prob)
-            # For "deterministic" demonstrations on insertion-easy, use this:
-            # pick_pix = (160,80)
-            pick_pos = utils.pix_to_xyz(pick_pix, hmap,
-                                        self.bounds, self.pix_size)
             pick_pose = (np.asarray(pick_pos), np.asarray((0, 0, 0, 1)))
 
             # Get placing pose.

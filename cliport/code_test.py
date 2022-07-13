@@ -8,7 +8,7 @@ import random
 # from cliport import tasks
 # from cliport.dataset import RavensDataset
 # from cliport.environments.environment import Environment
-
+import pdb
 
 import tasks
 from cliport.dataset import RavensDataset
@@ -51,8 +51,43 @@ def main(cfg):
     env.set_task(task)
     obs = env.reset()
 
-    # while True:
-    #     env.step_simulation()
+    obj = env.add_cube(0.01, [0.1, 0.1, 0.05], (0.5, 0.5, 0, 1),
+                            [-1, -1, 0.1],
+                            (0, 0, 0, 1))
+
+    object_position, object_ori = env.pb_client.getBasePositionAndOrientation(obj)
+    theta = env.pb_client.getEulerFromQuaternion(object_ori)[-1]
+    pre_pick_ori = env.pb_client.getQuaternionFromEuler([np.pi/2,
+                                            np.pi/2, 0])
+    pre_pick_z = object_position[2] + 0.2
+    pre_pick_pos = [*object_position[:2], pre_pick_z]
+    pick_pos = [*object_position[:2], object_position[2] + 0.01]
+
+    print('object Position:', pre_pick_pos[:2])
+    env.locobot.move_to(np.array(pre_pick_pos[:2]), tol = 0.4)
+    env.locobot.turn_to_point(pre_pick_pos[:2], tol = np.pi/6)
+
+    env.locobot.move_arm((0,0,0,0,0))
+
+    # pdb.set_trace()
+    contacts = False
+    while not contacts:
+        env.locobot.move_arm(env.locobot.actionj)
+
+        # pdb.set_trace()
+        env.locobot.move_ee(pre_pick_pos, pre_pick_ori)
+
+        env.locobot.move_ee(pick_pos, pre_pick_ori)
+
+
+        env.ee.activate()
+        env.locobot.move_ee(pre_pick_pos, pre_pick_ori)
+        contacts = env.ee.detect_contact()
+    print(f'Bodies in contact: {contacts}')
+
+
+    while True:
+        env.step_simulation()
 
     # # Collect training data from oracle demonstrations.
     # while dataset.n_episodes < cfg['n']:
@@ -64,7 +99,6 @@ def main(cfg):
     random.seed(seed)
 
     print('Oracle demo: {}/{} | Seed: {}'.format(dataset.n_episodes + 1, cfg['n'], seed))
-
 
     info = env.info
     reward = 0

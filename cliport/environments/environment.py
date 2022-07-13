@@ -33,12 +33,13 @@ UR5_URDF_PATH = 'ur5/ur5.urdf'
 WORKSPACE_URDF_PATH = 'ur5/workspace.urdf'
 PLANE_URDF_PATH = 'plane/plane.urdf'
 LOCOBOT_URDF = 'locobot_description/locobot.urdf'
-
+CUBE_URDF = 'assets/cube/cube.urdf'
 
 ## TODO
 ## (1) fix the image size from camera - currently resizing
 ##     instead of setting camera config
 ## (2) hard coded image size - in config - and everywhere
+## (3) in task.py - removed the requirement for mask - fix it
 
 class Environment(gym.Env):
     """OpenAI Gym-style environment class."""
@@ -47,8 +48,8 @@ class Environment(gym.Env):
                  assets_root,
                  task=None,
                  opengl_render = True,
-                 gui = True,
-                 realtime = False,
+                 gui=True,
+                 realtime=False,
                  disp=False,
                  shared_memory=False,
                  hz=240,
@@ -129,7 +130,7 @@ class Environment(gym.Env):
         #         intArgs=[p.AddFileIOAction],
         #         physicsClientId=client)
 
-        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
         self.pb_client.setPhysicsEngineParameter(enableFileCaching=0)
         self.pb_client.setAdditionalSearchPath(assets_root)
         self.pb_client.setAdditionalSearchPath(tempfile.gettempdir())
@@ -179,6 +180,24 @@ class Environment(gym.Env):
         self._random = np.random.RandomState(seed)
         return seed
 
+    def add_cube(self, mass, dims, color, pos, ori):
+        cube_template = CUBE_URDF
+        l, w, h = dims
+        r, g, b, a = color
+        replace = {'MASS': mass,
+                   'LENGTH': l,
+                   'WIDTH': w,
+                   'HEIGHT': h,
+                   'RED': r,
+                   'GREEN': g,
+                   'BLUE': b,
+                   'ALPHA': a}
+
+        urdf = fill_template(cube_template, replace)
+        id = self.add_object(urdf, (pos, ori), 'rigid')
+        os.remove(urdf)
+        return id
+
     def reset(self):
         """Performs common reset functionality for all supported tasks."""
         if not self.task:
@@ -190,13 +209,13 @@ class Environment(gym.Env):
         self.pb_client.setGravity(0, 0, -9.8)
 
         # Temporarily disable rendering to load scene faster.
-        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
 
         pybullet_utils.load_urdf(self.pb_client, os.path.join(self.assets_root, PLANE_URDF_PATH),
                                  [0, 0, -0.001])
 
-        pybullet_utils.load_urdf(
-            self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.00])
+        # pybullet_utils.load_urdf(
+        #     self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.00])
 
         # Load UR5 robot arm equipped with suction end effector.
         # TODO(andyzeng): add back parallel-jaw grippers.
@@ -207,7 +226,7 @@ class Environment(gym.Env):
                                                [0, 0, 0.001])
 
         self.locobot = Locobot(self, self.bot_id)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         self.locobot.reset()
 
         self.ee = self.task.ee(self.assets_root, self.pb_client, self.bot_id,
@@ -247,8 +266,9 @@ class Environment(gym.Env):
         if action is not None:
             timeout = self.task.primitive(self.movej, self.movep,
                                           self.ee, action['pose0'],
-                                          action['pose1'], 
-                                          navigator = self.locobot.move_to_discrete)
+                                          action['pose1'],
+                                          navigator = self.locobot.move_to_discrete,
+                                          turn = self.locobot.turn_to_point)
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
@@ -486,7 +506,7 @@ class Environment(gym.Env):
 
     def movep(self, pose, speed=0.01):
         """Move UR5 to target end effector pose."""
-        self.locobot.move_ee(pose[0], pose[1])
+        return self.locobot.move_ee(pose[0], pose[1])
         # targj = self.solve_ik(pose)
         # return self.movej(targj, speed)
 
