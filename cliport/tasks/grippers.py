@@ -360,7 +360,7 @@ class LocobotSuction(Gripper):
         # print(points)
         # exit()
         if self.activated:
-            points = [point for point in points if point[2] != self.body]
+            points = [point for point in points if point[2] != body]
 
         # # We know if len(points) > 0, contact is made with SOME rigid item.
         if points:

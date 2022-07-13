@@ -38,7 +38,7 @@ class Locobot:
         self.bot = bot
 
         self.wheel_joints = [1, 2]  # Left and right wheels
-        self.wheel_default_forward_vel = 20
+        self.wheel_default_forward_vel = 40
         self.wheel_default_rotate_vel = 20
 
         # self.time_long = 80
@@ -110,7 +110,7 @@ class Locobot:
 
         for i in range(len(self.arm_joints)):
             self.env.pb_client.resetJointState(self.bot, self.arm_joints[i], self.homej[i])
-        self.set_camera_grasp_mode()
+        # self.set_camera_grasp_mode()
         self.set_locobot_camera_pan_tilt(0., 0.6)
         # self.forward_simulation()
 
@@ -350,6 +350,3 @@ class Locobot:
     #     # self.step_simulation_calls += nsteps
     #     # for i in range(nsteps):
     #     #     self.env.pb_client.stepSimulation()
-
-
-

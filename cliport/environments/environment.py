@@ -39,7 +39,7 @@ CUBE_URDF = 'assets/cube/cube.urdf'
 ## (1) fix the image size from camera - currently resizing
 ##     instead of setting camera config
 ## (2) hard coded image size - in config - and everywhere
-## (3) in task.py - removed the requirement for mask - fix it
+## (3) camera tilt - manage it
 
 class Environment(gym.Env):
     """OpenAI Gym-style environment class."""
@@ -247,7 +247,7 @@ class Environment(gym.Env):
 
         # Re-enable rendering.
         self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_RENDERING, 1)
-        
+
         # self.step_simulation()
         obs, _, _, _ = self.step()
         return obs
@@ -393,19 +393,30 @@ class Environment(gym.Env):
     # Robot Movement Functions
     # ---------------------------------------------------------------------------
 
-     def movej(self, targj, tol=1e-2, speed=0.01, t_lim=5):
+    def detect_objects_in_ee(self):
+        contact_points = self.pb_client.getContactPoints(bodyA = self.bot_id,
+                                            linkIndexA = self.locobot.ee_link)
+        bodies = set([contact[2] for contact in contact_points])
+        bodies = (bodies.difference({self.bot_id})).intersection(self.obj_ids['rigid'])
+
+        return bodies, (len(bodies) > 0)
+
+    def movej(self, targj, tol=1e-2, speed=0.5, t_lim=5, collision_detector = False):
         '''
         Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
         '''
         success = False
 
+        collision = False
         t0 = time.time()
         while (time.time() - t0) < t_lim:
         # for i in range(max_steps):
             currj = np.array(self.locobot.get_arm_jpos())
             diffj = targj - currj
 
-            if all(np.abs(diffj) < tol):
+            if collision_detector:
+                collision = self.detect_objects_in_ee()[1]
+            if all(np.abs(diffj) < tol) or collision:
                 success = True
                 break
 
@@ -488,10 +499,11 @@ class Environment(gym.Env):
 
         self.video_writer.append_data(color)
 
-    def movep(self, pose, speed=0.01, tol=1e-2):
+    def movep(self, pose, speed=0.5, tol=1e-2, collision_detector=False):
         """Move UR5 to target end effector pose."""
-        arm_joints_qs = self.locobt.jpos_from_ee_pose(pose[0], pose[1])
-        success = self.movej(arm_joints_qs, speed=speed, tol = tol)
+        arm_joints_qs = self.locobot.jpos_from_ee_pose(pose[0], pose[1])
+        success = self.movej(arm_joints_qs, speed=speed, tol = tol,
+                             collision_detector=collision_detector)
         return success
 
     def rotate_base(self, theta, relative = True, t_lim = 20, tol = 1e-3):
@@ -517,19 +529,19 @@ class Environment(gym.Env):
                 success = True
                 break
 
-            vel = self.wheel_default_rotate_vel
+            vel = self.locobot.wheel_default_rotate_vel
             # if abs(diffj) < 0.75:
             #     vel = 10.0
             if abs(diffj) < 0.25:
-                vel = self.wheel_default_rotate_vel/2
+                vel = self.locobot.wheel_default_rotate_vel/2
             if diffj > 0:
-                self.rotate_to_left(vel)
+                self.locobot.rotate_to_left(vel)
             else:
-                self.rotate_to_right(vel)
+                self.locobot.rotate_to_right(vel)
 
             self.step_simulation()
 
-        for _ in range(10):
+        for _ in range(20):
             self.step_simulation()
 
         return success
@@ -553,7 +565,7 @@ class Environment(gym.Env):
             diffj = target_position - currj
 
             if np.linalg.norm(diffj) < tol:
-                self.stop_base()
+                self.locobot.stop_base()
                 success = True
                 break
 
@@ -562,7 +574,7 @@ class Environment(gym.Env):
             target_direction = np.arctan2(dy, dx)
 
             current_direction = self.pb_client.getEulerFromQuaternion(
-                self.env.pb_client.getBasePositionAndOrientation(self.bot)[1])[-1]
+                self.locobot.get_base_pose()[1])[-1]
 
             sin_direction_error = np.abs(np.sin(target_direction - current_direction))
             if (sin_direction_error > np.sin(direction_error_threshold)):
@@ -570,15 +582,15 @@ class Environment(gym.Env):
 
             #########################################################
             norm = np.linalg.norm([dx, dy])
-            vel = self.wheel_default_forward_vel
+            vel = self.locobot.wheel_default_forward_vel
             if norm < 0.75:
-                vel = self.wheel_default_forward_vel/2
+                vel = self.locobot.wheel_default_forward_vel/2
             if norm < 0.2:
                 vel = 10.0
-            self.base_forward(vel)
+            self.locobot.base_forward(vel)
             self.step_simulation()
 
-        for _ in range(10):
+        for _ in range(20):
             self.step_simulation()
 
         return success
@@ -611,7 +623,7 @@ class Environment(gym.Env):
             obs['depth'] += (depth,)
 
         return obs
-        
+
 class EnvironmentNoRotationsWithHeightmap(Environment):
     """Environment that disables any rotations and always passes [0, 0, 0, 1]."""
 

@@ -79,7 +79,7 @@ class Task():
                 # Ignore already matched objects.
                 for i in range(len(objs)):
                     object_id, (symmetry, _) = objs[i]
-                    pose = env.pb_client.getBasePositionAndOrientation(object_id)
+                    pose = p.getBasePositionAndOrientation(object_id)
                     targets_i = np.argwhere(matches[i, :]).reshape(-1)
                     for j in targets_i:
                         if self.is_match(pose, targs[j], symmetry):
@@ -91,7 +91,7 @@ class Task():
             nn_targets = []
             for i in range(len(objs)):
                 object_id, (symmetry, _) = objs[i]
-                xyz, _ = env.pb_client.getBasePositionAndOrientation(object_id)
+                xyz, _ = p.getBasePositionAndOrientation(object_id)
                 targets_i = np.argwhere(matches[i, :]).reshape(-1)
                 if len(targets_i) > 0:  # pylint: disable=g-explicit-length-test
                     targets_xyz = np.float32([targs[j][0] for j in targets_i])
@@ -110,47 +110,35 @@ class Task():
             # Filter out matched objects.
             order = [i for i in order if nn_dists[i] > 0]
 
-            ##------------------------------------------------------------------------------
-            # pick_mask = None
-            # for pick_i in order:
-            #     pick_mask = np.uint8(obj_mask == objs[pick_i][0])
-            #
-            #     # Erode to avoid picking on edges.
-            #     # pick_mask = cv2.erode(pick_mask, np.ones((3, 3), np.uint8))
-            #
-            #     if np.sum(pick_mask) > 0:
-            #         break
-            #
-            # # import pdb; pdb.set_trace()
-            # # while True:
-            # #     env.locobot.get_fp_images()
-            # #     env.step_simulation()
-            #
-            # # Trigger task reset if no object is visible.
-            # if pick_mask is None or np.sum(pick_mask) == 0:
-            #     self.goals = []
-            #     self.lang_goals = []
-            #     print('Object for pick is not visible. Skipping demonstration.')
-            #     return
-            #
-            # # Get picking pose.
-            # pick_prob = np.float32(pick_mask)
-            # pick_pix = utils.sample_distribution(pick_prob)
-            # # For "deterministic" demonstrations on insertion-easy, use this:
-            # # pick_pix = (160,80)
-            # pick_pos = utils.pix_to_xyz(pick_pix, hmap,
-            #                             self.bounds, self.pix_size)
-            ##------------------------------------------------------------------------------
+            pick_mask = None
+            for pick_i in order:
+                pick_mask = np.uint8(obj_mask == objs[pick_i][0])
 
-            pick_i = 0
-            print('objs', objs, 'order', order)
-            pick_pos = env.pb_client.getBasePositionAndOrientation(objs[order[pick_i]][0])[0]
+                # Erode to avoid picking on edges.
+                # pick_mask = cv2.erode(pick_mask, np.ones((3, 3), np.uint8))
 
+                if np.sum(pick_mask) > 0:
+                    break
+
+            # Trigger task reset if no object is visible.
+            if pick_mask is None or np.sum(pick_mask) == 0:
+                self.goals = []
+                self.lang_goals = []
+                print('Object for pick is not visible. Skipping demonstration.')
+                return
+
+            # Get picking pose.
+            pick_prob = np.float32(pick_mask)
+            pick_pix = utils.sample_distribution(pick_prob)
+            # For "deterministic" demonstrations on insertion-easy, use this:
+            # pick_pix = (160,80)
+            pick_pos = utils.pix_to_xyz(pick_pix, hmap,
+                                        self.bounds, self.pix_size)
             pick_pose = (np.asarray(pick_pos), np.asarray((0, 0, 0, 1)))
 
             # Get placing pose.
             targ_pose = targs[nn_targets[pick_i]]  # pylint: disable=undefined-loop-variable
-            obj_pose = env.pb_client.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
+            obj_pose = p.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
             if not self.sixdof:
                 obj_euler = utils.quatXYZW_to_eulerXYZ(obj_pose[1])
                 obj_quat = utils.eulerXYZ_to_quatXYZW((0, 0, obj_euler[2]))

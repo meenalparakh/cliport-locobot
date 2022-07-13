@@ -497,7 +497,7 @@
         <limit effort="1" lower="-1" upper="0" velocity="1"/>
     </joint> -->
 
-    <joint name="joint_6" type="fixed">
+    <!-- <joint name="joint_6" type="fixed">
         <origin rpy="1.57 0 1.57" xyz="0.07285 0 0.0050143"/>
         <parent link="gripper_link"/>
         <child link="finger"/>
@@ -568,7 +568,7 @@
           <cylinder length="0.028" radius="0.001"/>
         </geometry>
       </collision>
-    </link>
+    </link> -->
 
     <!-- <link name="finger_l">
         <inertial>
