@@ -38,7 +38,7 @@ class Locobot:
         self.bot = bot
 
         self.wheel_joints = [1, 2]  # Left and right wheels
-        self.wheel_default_forward_vel = 40
+        self.wheel_default_forward_vel = 20
         self.wheel_default_rotate_vel = 20
 
         # self.time_long = 80
@@ -65,8 +65,8 @@ class Locobot:
         self.camera_motor_joints = [20, 21]
 
         # some configurations for the joints
-        self.homej = np.array([np.pi/2, np.pi/4, -np.pi/4, np.pi/2, 0])  # default config for arm
-        self.actionj = np.array([0, 0, -np.pi/12, np.pi/2, 0])
+        self.homej = np.array([np.pi/2, np.pi/6, -np.pi/4, np.pi/2, 0])  # default config for arm
+        self.actionj = np.array([0, 0, -np.pi/12, 0, 0])
 
         self.navigation_cam_tilt = NAVIGATION_CAM_TILT
         self.grasping_cam_tilt = GRASPING_CAM_TILT

@@ -73,64 +73,92 @@ class PickPlace():
 class LocobotPickPlace():
     """Pick and place primitive."""
 
-    def __init__(self, height=0.32, speed=0.01):
+    def __init__(self, height=0.2, speed=0.01):
         self.height, self.speed = height, speed
 
-    def __call__(self, movej, movep, ee, pose0, pose1, navigator = None, turn = None):
+    def __call__(self, movej, movep, ee, pose0, pose1, navigator = None):
         pick_pose, place_pose = pose0, pose1
 
         print(f'pick pose: {pick_pose}, place_pose: {place_pose}')
-        input()
+        # input()
 
         # Execute picking primitive.
-        prepick_to_pick = ((0, 0, 0.32), (0, 0, 0, 1))
-        postpick_to_pick = ((0, 0, self.height), (0, 0, 0, 1))
-        prepick_pose = utils.multiply(pick_pose, prepick_to_pick)
-        postpick_pose = utils.multiply(pick_pose, postpick_to_pick)
-        if navigator is not None:
-            navigator(prepick_pose[0][:2], tol = 0.4)
-            if turn is not None:
-                turn(prepick_pose[0][:2], tol = np.pi/4)
-        timeout = movep(prepick_pose)
+        # prepick_to_pick = ((0, 0, self.height), (0, 0, 0, 1))
+        # postpick_to_pick = ((0, 0, self.height), (0, 0, 0, 1))
+        # prepick_pose = utils.multiply(pick_pose, prepick_to_pick)
+        # postpick_pose = utils.multiply(pick_pose, postpick_to_pick)
 
+        prepick_pos = list(pick_pose[0]);  prepick_pos[2] += self.height
+        postpick_pos = list(pick_pose[0]);  postpick_pos[2] += self.height
+        prepick_pose = (prepick_pos, pick_pose[1])
+        postpick_pose = (postpick_pos, pick_pose[1])
+
+        print(f'prepick: {prepick_pose}, postpick: {postpick_pose}')
+
+        # if navigator is not None:
+        success = navigator(prepick_pose[0][:2])
+        print(f'Locobot moved to pick position: {success}')
+        success &= movep(prepick_pose, tol=1e-2, speed=1.0)
         # Move towards pick pose until contact is detected.
-        delta = (np.float32([0, 0, -0.001]),
-                 utils.eulerXYZ_to_quatXYZW((0, 0, 0)))
-        targ_pose = prepick_pose
-        while not ee.detect_contact():  # and target_pose[2] > 0:
-            targ_pose = utils.multiply(targ_pose, delta)
-            timeout |= movep(targ_pose)
-            if timeout:
-                return True
+        print(f'Locobot arm at prepick pose: {success}')
+        success &= movep(pick_pose, collision_detector=True, tol=1e-3)
+        print(f'Locobot arm at pick pose: {success}')
+
+        # delta = (np.float32([0, 0, -0.001]),
+        #          utils.eulerXYZ_to_quatXYZW((0, 0, 0)))
+        # targ_pose = prepick_pose
+        # while not ee.detect_contact():  # and target_pose[2] > 0:
+        #     targ_pose = utils.multiply(targ_pose, delta)
+        #     timeout |= movep(targ_pose)
+        #     if timeout:
+        #         return True
 
         # Activate end effector, move up, and check picking success.
         ee.activate()
-        timeout |= movep(postpick_pose, self.speed)
+        success &= movep(postpick_pose)
+        print(f'Locobot arm at postpick pose: {success}')
+
         pick_success = ee.check_grasp()
 
         # Execute placing primitive if pick is successful.
         if pick_success:
-            preplace_to_place = ((0, 0, self.height), (0, 0, 0, 1))
-            postplace_to_place = ((0, 0, 0.32), (0, 0, 0, 1))
-            preplace_pose = utils.multiply(place_pose, preplace_to_place)
-            postplace_pose = utils.multiply(place_pose, postplace_to_place)
+            # preplace_to_place = ((0, 0, self.height), (0, 0, 0, 1))
+            # postplace_to_place = ((0, 0, self.height), (0, 0, 0, 1))
+            # preplace_pose = utils.multiply(place_pose, preplace_to_place)
+            # postplace_pose = utils.multiply(place_pose, postplace_to_place)
+            preplace_pos = list(place_pose[0]);  preplace_pos[2] += self.height
+            postplace_pos = list(place_pose[0]);  postplace_pos[2] += self.height
+            preplace_pose = (preplace_pos, place_pose[1])
+            postplace_pose = (postplace_pos, place_pose[1])
             targ_pose = preplace_pose
-            while not ee.detect_contact():
-                targ_pose = utils.multiply(targ_pose, delta)
-                if navigator is not None:
-                    navigator(targ_pose[0][:2], tol = 0.4)
-                timeout |= movep(targ_pose, self.speed)
-                if timeout:
-                    return True
+
+            success &= navigator(targ_pose[0][:2])
+            print(f'Locobot moved at place pose: {success}')
+
+            success &= movep(preplace_pose)
+            print(f'Locobot arm at preplace pose: {success}')
+
+            success &= movep(place_pose, tol=1e-3)
+            print(f'Locobot arm at place pose: {success}')
+            # while not ee.detect_contact():
+            #     targ_pose = utils.multiply(targ_pose, delta)
+            #     # if navigator is not None:
+            #
+            #     success |= movep(targ_pose, self.speed)
+            #     if not success:
+            #         return False
             ee.release()
-            timeout |= movep(postplace_pose)
+            success &= movep(postplace_pose)
+            print(f'Locobot arm at postplace pose: {success}')
 
         # Move to prepick pose if pick is not successful.
         else:
             ee.release()
-            timeout |= movep(prepick_pose)
+            success &= movep(prepick_pose)
 
-        return timeout
+        success &= movej()
+        success = True
+        return (not success)
 
 def push(movej, movep, ee, pose0, pose1):  # pylint: disable=unused-argument
     """Execute pushing primitive.

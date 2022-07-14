@@ -30,7 +30,7 @@ PLACE_STEP = 0.0003
 PLACE_DELTA_THRESHOLD = 0.005
 
 UR5_URDF_PATH = 'ur5/ur5.urdf'
-WORKSPACE_URDF_PATH = 'ur5/workspace.urdf'
+WORKSPACE_URDF_PATH = 'table/table.urdf'
 PLANE_URDF_PATH = 'plane/plane.urdf'
 LOCOBOT_URDF = 'locobot_description/locobot.urdf'
 CUBE_URDF = 'assets/cube/cube.urdf'
@@ -72,7 +72,9 @@ class Environment(gym.Env):
 
         self.pix_size = 0.003125
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
-        self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
+        # self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
+        self.workspace_height = 0.165
+
         self.agent_cams = cameras.RealSenseD415.CONFIG
         self.record_cfg = record_cfg
         self.save_video = False
@@ -208,19 +210,25 @@ class Environment(gym.Env):
         # Temporarily disable rendering to load scene faster.
         self.pb_client.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
 
-        pybullet_utils.load_urdf(self.pb_client, os.path.join(self.assets_root, PLANE_URDF_PATH),
+        pybullet_utils.load_urdf(self.pb_client,
+                                 os.path.join(self.assets_root,
+                                              PLANE_URDF_PATH),
                                  [0, 0, -0.001])
 
-        pybullet_utils.load_urdf(
-            self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH), [0.5, 0, 0.00])
+        self.workspace = pybullet_utils.load_urdf(
+            self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH),
+                                         [0.5, 0, 0])
 
+        self.ws_edgepts = self.get_ws_edgepts(show=False, margin = 0.25)
+        self.ws_outer_edgepts = self.get_ws_edgepts(show=False, margin = 0.4)
         # Load UR5 robot arm equipped with suction end effector.
         # TODO(andyzeng): add back parallel-jaw grippers.
         # self.ur5 = pybullet_utils.load_urdf(
         #     p, os.path.join(self.assets_root, UR5_URDF_PATH))
         self.bot_id = pybullet_utils.load_urdf(self.pb_client,
-                                               os.path.join(self.assets_root, LOCOBOT_URDF),
-                                               [0, 0, 0.001])
+                                               os.path.join(self.assets_root,
+                                                            LOCOBOT_URDF),
+                                               [-0.25, -1.0, 0.001])
 
         self.locobot = Locobot(self, self.bot_id)
         # import pdb; pdb.set_trace()
@@ -260,7 +268,12 @@ class Environment(gym.Env):
           (obs, reward, done, info) tuple containing MDP step data.
         """
         if action is not None:
-            timeout = self.task.primitive(self.movej, self.movep, self.ee, action['pose0'], action['pose1'])
+            timeout = self.task.primitive(self.movej,
+                                          self.movep,
+                                          self.ee,
+                                          action['pose0'],
+                                          action['pose1'],
+                                          navigator=self.motion_planner)
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
@@ -401,16 +414,15 @@ class Environment(gym.Env):
 
         return bodies, (len(bodies) > 0)
 
-    def movej(self, targj, tol=1e-2, speed=0.5, t_lim=5, collision_detector = False):
-        '''
-        Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
-        '''
+    def movej(self, targj=None, tol=1e-2, speed=0.5, max_steps=100,
+              collision_detector = False):
         success = False
-
         collision = False
-        t0 = time.time()
-        while (time.time() - t0) < t_lim:
-        # for i in range(max_steps):
+        if targj is None:
+            print('Moving the arm to home pose')
+            targj = self.locobot.homej
+
+        for i in range(max_steps):
             currj = np.array(self.locobot.get_arm_jpos())
             diffj = targj - currj
 
@@ -419,18 +431,47 @@ class Environment(gym.Env):
             if all(np.abs(diffj) < tol) or collision:
                 success = True
                 break
-
-            norm = np.linalg.norm(diffj)
-            v = diffj / norm if norm > 0 else 0
-            stepj = currj + v * speed
-            self.locobot.set_arm_jpos(stepj)
-
+            delta = diffj
+            if np.linalg.norm(delta) > speed:
+                delta = speed*diffj/(np.linalg.norm(delta))
+            new_targj = currj + delta
+            self.locobot.set_arm_jpos(new_targj)
             self.step_simulation()
 
-        if not success:
-            print(f'Warning: movej exceeded {t_lim} second timeout. Skipping.')
-
         return success
+        # '''
+        # Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
+        # '''
+        # if targj is None:
+        #     print('Moving the arm to home pose')
+        #     targj = self.locobot.homej
+        #
+        # success = False
+        # collision = False
+        # t0 = time.time()
+        # while (time.time() - t0) < t_lim:
+        # # for i in range(max_steps):
+        #     currj = np.array(self.locobot.get_arm_jpos())
+        #     diffj = targj - currj
+        #
+        #     if collision_detector:
+        #         collision = self.detect_objects_in_ee()[1]
+        #     if all(np.abs(diffj) < tol) or collision:
+        #         success = True
+        #         break
+        #
+        #     norm = np.linalg.norm(diffj)
+        #     v = diffj / norm if norm > 0 else 0
+        #     v = min(1, diffj)
+        #     stepj = currj + v * speed
+        #     self.locobot.set_arm_jpos(stepj)
+        #
+        #     self.step_simulation()
+        #
+        # if not success:
+        #     print(f'Warning: movej exceeded {t_lim} second timeout. Skipping.')
+        #
+        # return success
 
     def start_rec(self, video_filename):
         assert self.record_cfg
@@ -504,6 +545,7 @@ class Environment(gym.Env):
         arm_joints_qs = self.locobot.jpos_from_ee_pose(pose[0], pose[1])
         success = self.movej(arm_joints_qs, speed=speed, tol = tol,
                              collision_detector=collision_detector)
+        # print('inside movep', success)
         return success
 
     def rotate_base(self, theta, relative = True, t_lim = 20, tol = 1e-3):
@@ -546,11 +588,14 @@ class Environment(gym.Env):
 
         return success
 
-    def move_to(self, target_position, t_lim = 100,
-                tol = 0.1, direction_error_threshold = np.pi/6,
-                skip_starting_rotation = False):
+    def move_to(self, target_position, t_lim=100,
+                tol=0.1,
+                direction_error_threshold=np.pi/6,
+                skip_starting_rotation=False,
+                additional_target_position=None):
 
         success = False
+        found = False
 
         currj = np.array(self.locobot.get_base_pose()[0][:2])
         dx, dy = target_position - currj
@@ -568,6 +613,13 @@ class Environment(gym.Env):
                 self.locobot.stop_base()
                 success = True
                 break
+
+            if additional_target_position is not None:
+                d_ = np.linalg.norm(additional_target_position - currj)
+                if d_ < 0.45:
+                    self.locobot.stop_base()
+                    found = True
+                    break
 
             ##############  Check if the bot deviated ##############
             dx, dy = diffj
@@ -593,7 +645,7 @@ class Environment(gym.Env):
         for _ in range(20):
             self.step_simulation()
 
-        return success
+        return success, found
 
     def set_camera_navigation_mode(self):
         self.locobot.set_locobot_camera_tilt(
@@ -609,7 +661,66 @@ class Environment(gym.Env):
         bot_pos = self.locobot.get_base_pose()[0][:2]
         dx, dy = np.array(pos) - np.array(bot_pos)
         theta = np.arctan2(dy, dx)
-        self.rotate_base(theta, relative = False, tol = tol)
+        success = self.rotate_base(theta, relative = False, tol = tol)
+        return success
+
+    def motion_planner(self, target_pos, tol_dist=0.50, tol_angle=np.pi/6):
+
+        # def _move(pt1_idx, pt2_idx, _target_pos):
+        #     if pt1_idx < pt2_idx:
+        #         keypoints = self.ws_edgepts[1][(pt1_idx, pt2_idx)]
+        #     else:
+        #         keypoints = self.ws_edgepts[1][(pt2_idx, pt1_idx)]
+        #         keypoints = keypoints[::-1]
+        #
+        #     for pt_idx in keypoints:
+        #         pt_coords = self.ws_outer_edgepts[0][pt_idx]
+        #         success, found = self.move_to(pt_coords, tol=0.1,
+        #                         additional_target_position=_target_pos)
+        #         if found:
+        #             return True
+        #         print(f'Moved to {pt_idx}')
+        #
+        #     target_edgept = self.ws_edgepts[0][pt2_idx]
+        #     self.move_to(target_edgept, tol=0.1,
+        #                  additional_target_position=_target_pos)
+        #
+        #     return True
+        #
+        target_idx= None
+        for id, pt in enumerate(self.ws_edgepts[0]):
+            # print(id, pt)
+            d = np.linalg.norm(np.array(pt) - target_pos)
+            print(f'Distance of {target_pos} from {id} ({pt}): {d}, ')
+            if d < tol_dist:
+                target_idx = id
+                print(f'Target index: {target_idx}')
+                break
+        # assert False
+        if target_idx is None:
+            import pdb; pdb.set_trace()
+            raise RuntimeError(f'No edgepoint is within {tol_dist} of edgepoints.')
+        #
+        # cur_pos = np.array(self.locobot.get_base_pose()[0][:2])
+        # dist = [np.linalg.norm(cur_pos-pt) for pt in self.ws_edgepts[0]]
+        # pt1_idx = np.argmin(dist)
+        # print(f'Current idx: {pt1_idx}')
+        # self.move_to(self.ws_edgepts[pt1_idx], tol=0.1)
+
+        success = self.movej(self.locobot.homej)
+        print(f'Setting pose to homej: {success}')
+        # success &= _move(pt1_idx, target_idx, target_pos)
+        edge_pt = np.array(self.ws_edgepts[0][target_idx])
+        dx, dy = np.array(target_pos) - np.array(edge_pt)
+        theta = np.arctan2(dy, dx)
+        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
+        self.pb_client.resetBasePositionAndOrientation(self.bot_id, [*edge_pt, 0.001], ori)
+
+        # success &= self.turn_to_point(target_pos, tol=tol_angle)
+        success &= self.movej(self.locobot.actionj)
+        print(f'Setting pose to actionj: {success}')
+
+        return success
 
     # ---------------------------------------------------------------------------
     # ---------------------------------------------------------------------------
@@ -623,6 +734,47 @@ class Environment(gym.Env):
             obs['depth'] += (depth,)
 
         return obs
+
+    def get_ws_edgepts(self, margin=0.25, show=False):
+        xlim = (0.25, 0.75)
+        ylim = (-0.5, 0.5)
+        diag = margin/np.sqrt(2)
+        edge1 = [(xlim[0]-margin, i) for i in np.linspace(*ylim, num=4)][1:-1]
+        edge2 = [(i, ylim[1] + margin) for i in np.linspace(*xlim, num=3)][1:-1]
+        edge3 = [(xlim[1] + margin, i) for i in np.linspace(*ylim, num=4)][1:-1]
+        edge4 = [(i, ylim[0] - margin) for i in np.linspace(*xlim, num=3)][1:-1]
+        edge3.reverse(); edge4.reverse()
+
+        diag1 = (xlim[0] - diag, ylim[1] + diag)
+        diag2 = (xlim[1] + diag, ylim[1] + diag)
+        diag3 = (xlim[1] + diag, ylim[0] - diag)
+        diag4 = (xlim[0] - diag, ylim[0] - diag)
+
+        # edgepoints = {'diag4': diag4,
+        #               'edge1': edge1, 'diag1': diag1,
+        #               'edge2': edge2, 'diag2': diag2,
+        #               'edge3': edge3, 'diag3': diag3,
+        #               'edge4': edge4}
+        edgepoints = [diag4, *edge1, diag1, *edge2, diag2, *edge3, diag3, *edge4]
+
+        mapping = {
+            (0, 1): [], (0, 2): [],  (0, 3): [],  (0, 4): [3],   (0, 5): [3],   (0, 6): [8],   (0, 7): [8], (0, 8): [], (0, 9): [],
+            (1, 2): [], (1, 3): [],  (1, 4): [3], (1, 5): [3],   (1, 6): [3,5], (1, 7): [0,8], (1, 8): [0], (1, 9): [0],
+            (2, 3): [], (2, 4): [3], (2, 5): [3], (2, 6): [3,5], (2, 7): [3,5], (2, 8): [0],   (2, 9): [0],
+            (3, 4): [], (3, 5): [],  (3, 6): [5], (3, 7): [5],   (3, 8): [5],   (3, 9): [0],
+            (4, 5): [], (4, 6): [5], (4, 7): [5], (4, 8): [5],   (4, 9): [5,8],
+            (5, 6): [], (5, 7): [],  (5, 8): [],  (5, 9): [8],
+            (6, 7): [], (6, 8): [],  (6, 9): [8],
+            (7, 8): [], (7, 9): [8],
+            (8, 9): []
+        }
+        if show:
+            for pt in edgepoints:
+                self.add_cube(0, [0.01, 0.01, 0.01],
+                              (0.8, 0, 0, 1),
+                              [*pt, self.workspace_height],
+                              (0, 0, 0, 1))
+        return edgepoints, mapping
 
 class EnvironmentNoRotationsWithHeightmap(Environment):
     """Environment that disables any rotations and always passes [0, 0, 0, 1]."""

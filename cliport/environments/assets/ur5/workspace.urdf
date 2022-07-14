@@ -19,12 +19,11 @@
         <color rgba="0.2 0.2 0.2 1"/>
       </material>
     </visual>
-    <!-- <collision>
+    <collision>
       <origin rpy="0 0 0" xyz="0 0 -0.005"/>
       <geometry>
         <box size="2.0 3.0 0.01"/>
       </geometry>
-    </collision> -->
+    </collision>
   </link>
 </robot>
-

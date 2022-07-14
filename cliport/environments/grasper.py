@@ -146,7 +146,7 @@ class Grasper:
 
             z = 2 * self.env.table_dims[2] + self.env.object_dims[2]
             drop_pos = [x, y, z]
-            drop_ori = self.env.bot.get_ee_pose()[0]
+            drop_ori = self.env.bot.get_ee_pose()[1]
 
             self.env.bot.move_arm(self.env.bot.actionj)
 

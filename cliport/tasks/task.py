@@ -23,6 +23,7 @@ class Task():
         self.ee = LocobotSuction #Suction
         self.mode = 'train'
         self.sixdof = False
+
         self.primitive = primitives.LocobotPickPlace()
         self.oracle_cams = cameras.Oracle.CONFIG
 
@@ -48,6 +49,7 @@ class Task():
         if not self.assets_root:
             raise ValueError('assets_root must be set for task, '
                              'call set_assets_root().')
+        self.env = env
         self.goals = []
         self.lang_goals = []
         self.progress = 0  # Task progression metric in range [0, 1].
@@ -57,7 +59,7 @@ class Task():
     # Oracle Agent
     # -------------------------------------------------------------------------
 
-    def oracle(self, env):
+    def oracle(self, env, locobot=True):
         """Oracle agent."""
         OracleAgent = collections.namedtuple('OracleAgent', ['act'])
 
@@ -79,7 +81,7 @@ class Task():
                 # Ignore already matched objects.
                 for i in range(len(objs)):
                     object_id, (symmetry, _) = objs[i]
-                    pose = p.getBasePositionAndOrientation(object_id)
+                    pose = env.pb_client.getBasePositionAndOrientation(object_id)
                     targets_i = np.argwhere(matches[i, :]).reshape(-1)
                     for j in targets_i:
                         if self.is_match(pose, targs[j], symmetry):
@@ -91,7 +93,7 @@ class Task():
             nn_targets = []
             for i in range(len(objs)):
                 object_id, (symmetry, _) = objs[i]
-                xyz, _ = p.getBasePositionAndOrientation(object_id)
+                xyz, _ = env.pb_client.getBasePositionAndOrientation(object_id)
                 targets_i = np.argwhere(matches[i, :]).reshape(-1)
                 if len(targets_i) > 0:  # pylint: disable=g-explicit-length-test
                     targets_xyz = np.float32([targs[j][0] for j in targets_i])
@@ -134,11 +136,17 @@ class Task():
             # pick_pix = (160,80)
             pick_pos = utils.pix_to_xyz(pick_pix, hmap,
                                         self.bounds, self.pix_size)
-            pick_pose = (np.asarray(pick_pos), np.asarray((0, 0, 0, 1)))
+
+            if locobot:
+                pickplace_ori = np.array(env.pb_client.getQuaternionFromEuler(
+                                                [np.pi/2, np.pi/2, 0]))
+            else:
+                pickplace_ori = np.asarray((0, 0, 0, 1))
+            pick_pose = (np.asarray(pick_pos), pickplace_ori)
 
             # Get placing pose.
             targ_pose = targs[nn_targets[pick_i]]  # pylint: disable=undefined-loop-variable
-            obj_pose = p.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
+            obj_pose = env.pb_client.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
             if not self.sixdof:
                 obj_euler = utils.quatXYZW_to_eulerXYZ(obj_pose[1])
                 obj_quat = utils.eulerXYZ_to_quatXYZW((0, 0, obj_euler[2]))
@@ -150,7 +158,7 @@ class Task():
 
             # Rotate end effector?
             if not rotations:
-                place_pose = (place_pose[0], (0, 0, 0, 1))
+                place_pose = (place_pose[0], pickplace_ori)
 
             place_pose = (np.asarray(place_pose[0]), np.asarray(place_pose[1]))
 
@@ -171,6 +179,7 @@ class Task():
             computing rewards that gives us finer-grained details. Use
             `extras` for further data analysis.
         """
+        print('Calculating reward')
         reward, info = 0, {}
 
         # Unpack next goal step.
@@ -181,7 +190,7 @@ class Task():
             step_reward = 0
             for i in range(len(objs)):
                 object_id, (symmetry, _) = objs[i]
-                pose = env.pb_client.getBasePositionAndOrientation(object_id)
+                pose = self.env.pb_client.getBasePositionAndOrientation(object_id)
                 targets_i = np.argwhere(matches[i, :]).reshape(-1)
                 for j in targets_i:
                     target_pose = targs[j]
@@ -191,6 +200,7 @@ class Task():
 
         # Evaluate by measuring object intersection with zone.
         elif metric == 'zone':
+            print('Evaluating reward by zone metric')
             zone_pts, total_pts = 0, 0
             obj_pts, zones = params
             for zone_idx, (zone_pose, zone_size) in enumerate(zones):
@@ -198,7 +208,7 @@ class Task():
                 # Count valid points in zone.
                 for obj_idx, obj_id in enumerate(obj_pts):
                     pts = obj_pts[obj_id]
-                    obj_pose = env.pb_client.getBasePositionAndOrientation(obj_id)
+                    obj_pose = self.env.pb_client.getBasePositionAndOrientation(obj_id)
                     world_to_zone = utils.invert(zone_pose)
                     obj_to_zone = utils.multiply(world_to_zone, obj_pose)
                     pts = np.float32(utils.apply(obj_to_zone, pts))
@@ -217,13 +227,18 @@ class Task():
         reward = self.progress + step_reward - self._rewards
         self._rewards = self.progress + step_reward
 
+        print(f'Calculated reward is {step_reward}, maximum is {max_reward}')
+
         # Move to next goal step if current goal step is complete.
         if np.abs(max_reward - step_reward) < 0.01:
             self.progress += max_reward  # Update task progress.
             self.goals.pop(0)
             if len(self.lang_goals) > 0:
                 self.lang_goals.pop(0)
+            print('Current goal completed! Moving to next goal.')
 
+        else:
+            print('Current goal incomplete!')
         return reward, info
 
     def done(self):
@@ -308,7 +323,7 @@ class Task():
             return None, None
         pix = utils.sample_distribution(np.float32(free))
         pos = utils.pix_to_xyz(pix, hmap, self.bounds, self.pix_size)
-        pos = (pos[0], pos[1], obj_size[2] / 2)
+        pos = (pos[0], pos[1], env.workspace_height + obj_size[2] / 2)
         theta = np.random.rand() * 2 * np.pi
         rot = utils.eulerXYZ_to_quatXYZW((0, 0, theta))
         return pos, rot
@@ -352,7 +367,7 @@ class Task():
         return tuple(size)
 
     def get_box_object_points(self, obj):
-        obj_shape = p.getVisualShapeData(obj)
+        obj_shape = self.env.pb_client.getVisualShapeData(obj)
         obj_dim = obj_shape[0][3]
         obj_dim = tuple(d for d in obj_dim)
         xv, yv, zv = np.meshgrid(
@@ -363,7 +378,7 @@ class Task():
         return np.vstack((xv.reshape(1, -1), yv.reshape(1, -1), zv.reshape(1, -1)))
 
     def get_mesh_object_points(self, obj):
-        mesh = env.pb_client.getMeshData(obj)
+        mesh = self.env.pb_client.getMeshData(obj)
         mesh_points = np.array(mesh[1])
         mesh_dim = np.vstack((mesh_points.min(axis=0), mesh_points.max(axis=0)))
         xv, yv, zv = np.meshgrid(
@@ -376,7 +391,7 @@ class Task():
     def color_random_brown(self, obj):
         shade = np.random.rand() + 0.5
         color = np.float32([shade * 156, shade * 117, shade * 95, 255]) / 255
-        env.pb_client.changeVisualShape(obj, -1, rgbaColor=color)
+        self.env.pb_client.changeVisualShape(obj, -1, rgbaColor=color)
 
     def set_assets_root(self, assets_root):
         self.assets_root = assets_root

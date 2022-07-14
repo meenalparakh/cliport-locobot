@@ -24,13 +24,14 @@ def main(cfg):
         hz=480,
         record_cfg=cfg['record']
     )
-    task = tasks.names['put-block-in-bowl-seen-colors']()
+    # task = tasks.names['stack-block-pyramid-seq-seen-colors']()
+    task = tasks.names['put-block-in-container-seen-colors']()
     task.mode = cfg['mode']
     record = cfg['record']['save_video']
     save_data = cfg['save_data']
 
     # Initialize scripted oracle agent and dataset.
-    agent = task.oracle(env)
+    agent = task.oracle(env, locobot=True)
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], task.mode))
     dataset = RavensDataset(data_path, cfg, n_demos=0, augment=False)
     print(f"Saving to: {data_path}")
@@ -51,52 +52,54 @@ def main(cfg):
     env.set_task(task)
     obs = env.reset()
 
-    obj = env.add_cube(0.01, [0.05, 0.1, 0.05], (0.1, 0.5, 0.5, 1),
-                            [-1, -1, 0.1],
-                            (0, 0, 0, 1))
-
-    # obj = env.obj_ids['rigid'][0]
-    object_position, object_ori = env.pb_client.getBasePositionAndOrientation(obj)
-    theta = env.pb_client.getEulerFromQuaternion(object_ori)[-1]
-    pre_pick_ori = env.pb_client.getQuaternionFromEuler([np.pi/2, np.pi/2, 0])
-    pre_pick_z = object_position[2] + 0.2
-    pre_pick_pos = [*object_position[:2], pre_pick_z]
-    pick_pos = [*object_position[:2], object_position[2] + 0.01]
-
-    print('object Position:', pre_pick_pos[:2])
-    # input()
-    env.move_to(np.array(pre_pick_pos[:2]), tol = 0.4)
-    env.turn_to_point(pre_pick_pos[:2], tol = np.pi/6)
-
-    # env.locobot.move_arm((0,0,0,0,0))
+    input()
+    # env.get_workspace_edgepoints(show = True)
 
     # pdb.set_trace()
-    contacts = False
-    while not contacts:
-        env.movej(env.locobot.actionj)
-        # pdb.set_trace()
-        env.movep((pre_pick_pos, pre_pick_ori))
-        env.movep((pick_pos, pre_pick_ori), collision_detector = False)
-
-
-        env.ee.activate()
-        env.movep((pre_pick_pos, pre_pick_ori))
-        contacts = env.ee.detect_contact()
-    print(f'Bodies in contact: {contacts}')
-
-    env.movej(env.locobot.homej)
-    env.move_to((0, 0), tol=0.4)
-    env.turn_to_point((0, 0), tol=np.pi/6)
-    env.movej(env.locobot.actionj)
-    drop_ori = env.locobot.get_ee_pose()[1]
-    env.movep(((0, 0, 0.2), drop_ori))
-    env.ee.release()
-    [env.step_simulation() for _ in range(10)]
-    env.movej(env.locobot.homej)
-
-
-    while True:
-        env.step_simulation()
+    # while True:
+    #     env.step_simulation()
+    #
+    # obj = env.add_cube(0.01, [0.05, 0.1, 0.05], (0.1, 0.5, 0.5, 1),
+    #                         [-1, -1, 0.1],
+    #                         (0, 0, 0, 1))
+    #
+    # object_position, object_ori = env.pb_client.getBasePositionAndOrientation(obj)
+    # theta = env.pb_client.getEulerFromQuaternion(object_ori)[-1]
+    # pre_pick_ori = env.pb_client.getQuaternionFromEuler([np.pi/2, np.pi/2, 0])
+    # pre_pick_z = object_position[2] + 0.2
+    # pre_pick_pos = [*object_position[:2], pre_pick_z]
+    # pick_pos = [*object_position[:2], object_position[2] + 0.01]
+    #
+    # print('object Position:', pre_pick_pos[:2])
+    #
+    # env.movej(env.locobot.homej)
+    # env.move_to(np.array(pre_pick_pos[:2]), tol = 0.4)
+    # env.turn_to_point(pre_pick_pos[:2], tol = np.pi/6)
+    # env.movej(env.locobot.actionj)
+    #
+    # contacts = False
+    # while not contacts:
+    #     env.movep((pre_pick_pos, pre_pick_ori))
+    #     env.movep((pick_pos, pre_pick_ori), collision_detector = True)
+    #     env.ee.activate()
+    #     env.movep((pre_pick_pos, pre_pick_ori))
+    #     contacts = env.ee.detect_contact()
+    # print(f'Bodies in contact: {contacts}')
+    #
+    # env.movej(env.locobot.homej)
+    # env.move_to((0, 0), tol=0.4)
+    # env.turn_to_point((0, 0), tol=np.pi/6)
+    # env.movej(env.locobot.actionj)
+    #
+    # drop_ori = env.locobot.get_ee_pose()[1]
+    # env.movep(((0, 0, 0.2), drop_ori))
+    # env.ee.release()
+    # [env.step_simulation() for _ in range(10)]
+    # env.movej(env.locobot.homej)
+    #
+    #
+    # while True:
+    #     env.step_simulation()
 
     # # Collect training data from oracle demonstrations.
     # while dataset.n_episodes < cfg['n']:
