@@ -12,6 +12,7 @@ from cliport.tasks import cameras
 from cliport.utils import utils
 import cv2
 import pdb
+import matplotlib.pyplot as plt
 
 # See transporter.py, regression.py, dummy.py, task.py, etc.
 PIXEL_SIZE = 0.003125
@@ -36,6 +37,7 @@ class RavensDataset(Dataset):
         self.n_episodes = 0
         self.images = self.cfg['dataset']['images']
         self.cache = self.cfg['dataset']['cache']
+        self.camera_type = self.cfg['dataset']['camera_type']
         self.n_demos = n_demos
         self.augment = augment
 
@@ -108,6 +110,7 @@ class RavensDataset(Dataset):
                     image = data[step, camera]
                     fname = f'S{step}-C{camera}.png'
                     if field == 'color':
+                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(os.path.join(field_path, fname), image)
                     elif field == 'depth':
                         sdepth = image * self.depth_scale
@@ -145,13 +148,21 @@ class RavensDataset(Dataset):
             dir = os.path.join(self._path, field, fname[:-4])
             data = [None]*num_steps
             for step in range(num_steps):
-                data[step] = [None]*num_cameras
-                for cam in range(num_cameras):
+                data[step] = []
+                if self.camera_type == 'fp':
+                    cameras = [3]
+                else:
+                    cameras = range(num_cameras)
+                for cam in cameras:
                     f = f'S{step}-C{cam}.png'
-                    image = cv2.imread(os.path.join(dir, f), cv2.IMREAD_UNCHANGED)
                     if field == 'depth':
+                        image = cv2.imread(os.path.join(dir, f), cv2.IMREAD_UNCHANGED)
                         image = image / self.depth_scale
-                    data[step][cam] = image
+                    elif field == 'color':
+                        image = cv2.imread(os.path.join(dir, f))
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                        # print(f' inside load: {image}')
+                    data[step].append(image)
 
             data = np.array(data)
             return data
@@ -222,8 +233,13 @@ class RavensDataset(Dataset):
 
     def process_sample(self, datum, augment=True):
         # Get training labels from data sample.
+        pdb.set_trace()
         (obs, act, _, info) = datum
-        img = self.get_image(obs)
+        cam_configs = info['cam_configs']
+        if self.camera_type == 'fp':
+            cam_configs = cam_configs[3:]
+
+        img = self.get_image(obs, cam_config=cam_configs)
 
         p0, p1 = None, None
         p0_theta, p1_theta = None, None
@@ -240,8 +256,14 @@ class RavensDataset(Dataset):
             p0_theta = 0
 
         # Data augmentation.
+        # plt.imsave('/Users/meenalp/Desktop/actual_image.png', img[:,:,:3]/255.0)
+        # plt.imsave('/Users/meenalp/Desktop/actual_himage.png', img[:,:,3])
+
         if augment:
             img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1], theta_sigma=self.aug_theta_sigma)
+
+        # plt.imsave('/Users/meenalp/Desktop/augment_image.png', img[:,:,:3]/255.0)
+        # plt.imsave('/Users/meenalp/Desktop/augment_himage.png', img[:,:,3])
 
         sample = {
             'img': img,
@@ -264,7 +286,8 @@ class RavensDataset(Dataset):
     def process_goal(self, goal, perturb_params):
         # Get goal sample.
         (obs, act, _, info) = goal
-        img = self.get_image(obs)
+        cam_configs = info['cam_configs']
+        img = self.get_image(obs, cam_config=cam_configs)
 
         p0, p1 = None, None
         p0_theta, p1_theta = None, None

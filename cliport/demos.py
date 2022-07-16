@@ -26,7 +26,7 @@ def main(cfg):
     save_data = cfg['save_data']
 
     # Initialize scripted oracle agent and dataset.
-    agent = task.oracle(env)
+    agent = task.oracle(env, locobot=cfg['locobot'])
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], task.mode))
     dataset = RavensDataset(data_path, cfg, n_demos=0, augment=False)
     print(f"Saving to: {data_path}")

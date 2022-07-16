@@ -76,6 +76,8 @@ class Environment(gym.Env):
         self.workspace_height = 0.165
 
         self.agent_cams = cameras.RealSenseD415.CONFIG
+        # repeat the last comfig until we add a locobot.
+        self.agent_cams.append(self.agent_cams[-1])
         self.record_cfg = record_cfg
         self.save_video = False
         self.step_counter = 0
@@ -110,7 +112,9 @@ class Environment(gym.Env):
                      gym.spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)))
         })
 
-        self.pb_client = create_pybullet_client(gui=gui, realtime=realtime, opengl_render=opengl_render)
+        self.pb_client = create_pybullet_client(gui=gui,
+                                                realtime=realtime,
+                                                opengl_render=opengl_render)
 
         # Start PyBullet.
         # disp_option = p.DIRECT
@@ -220,7 +224,7 @@ class Environment(gym.Env):
                                          [0.5, 0, 0])
 
         self.ws_edgepts = self.get_ws_edgepts(show=False, margin = 0.25)
-        self.ws_outer_edgepts = self.get_ws_edgepts(show=False, margin = 0.4)
+        # self.ws_outer_edgepts = self.get_ws_edgepts(show=False, margin = 0.4)
         # Load UR5 robot arm equipped with suction end effector.
         # TODO(andyzeng): add back parallel-jaw grippers.
         # self.ur5 = pybullet_utils.load_urdf(
@@ -228,7 +232,7 @@ class Environment(gym.Env):
         self.bot_id = pybullet_utils.load_urdf(self.pb_client,
                                                os.path.join(self.assets_root,
                                                             LOCOBOT_URDF),
-                                               [-0.25, -1.0, 0.001])
+                                               [0, 0, 0.001])
 
         self.locobot = Locobot(self, self.bot_id)
         # import pdb; pdb.set_trace()
@@ -252,7 +256,7 @@ class Environment(gym.Env):
 
         # Reset task.
         self.task.reset(self)
-
+        self.agent_cams[-1] = self.locobot.get_camera_config()
         # Re-enable rendering.
         self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_RENDERING, 1)
 
@@ -278,6 +282,7 @@ class Environment(gym.Env):
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
             if timeout:
+                self.agent_cams[-1] = self.locobot.get_camera_config()
                 obs = {'color': (), 'depth': ()}
                 for config in self.agent_cams:
                     color, depth, _ = self.render_camera(config)
@@ -294,6 +299,7 @@ class Environment(gym.Env):
         done = self.task.done()
 
         # Add ground truth robot state into info.
+        self.agent_cams[-1] = self.locobot.get_camera_config()
         info.update(self.info)
 
         obs = self._get_obs()
@@ -323,23 +329,23 @@ class Environment(gym.Env):
         # OpenGL camera settings.
         lookdir = np.float32([0, 0, 1]).reshape(3, 1)
         updir = np.float32([0, -1, 0]).reshape(3, 1)
-        rotation = p.getMatrixFromQuaternion(config['rotation'])
+        rotation = self.pb_client.getMatrixFromQuaternion(config['rotation'])
         rotm = np.float32(rotation).reshape(3, 3)
         lookdir = (rotm @ lookdir).reshape(-1)
         updir = (rotm @ updir).reshape(-1)
         lookat = config['position'] + lookdir
         focal_len = config['intrinsics'][0]
         znear, zfar = config['zrange']
-        viewm = p.computeViewMatrix(config['position'], lookat, updir)
+        viewm = self.pb_client.computeViewMatrix(config['position'], lookat, updir)
         fovh = (image_size[0] / 2) / focal_len
         fovh = 180 * np.arctan(fovh) * 2 / np.pi
 
         # Notes: 1) FOV is vertical FOV 2) aspect must be float
         aspect_ratio = image_size[1] / image_size[0]
-        projm = p.computeProjectionMatrixFOV(fovh, aspect_ratio, znear, zfar)
+        projm = self.pb_client.computeProjectionMatrixFOV(fovh, aspect_ratio, znear, zfar)
 
         # Render with OpenGL camera settings.
-        _, _, color, depth, segm = p.getCameraImage(
+        _, _, color, depth, segm = self.pb_client.getCameraImage(
             width=image_size[1],
             height=image_size[0],
             viewMatrix=viewm,
@@ -388,6 +394,7 @@ class Environment(gym.Env):
                 info[obj_id] = (pos, rot, dim)
 
         info['bot_pose'] = self.locobot.get_base_pose()
+        info['cam_configs'] = self.agent_cams
         info['bot_jpos'] = self.locobot.get_arm_jpos()
         info['lang_goal'] = self.get_lang_goal()
         return info
@@ -750,18 +757,17 @@ class Environment(gym.Env):
         diag3 = (xlim[1] + diag, ylim[0] - diag)
         diag4 = (xlim[0] - diag, ylim[0] - diag)
 
-        # edgepoints = {'diag4': diag4,
-        #               'edge1': edge1, 'diag1': diag1,
-        #               'edge2': edge2, 'diag2': diag2,
-        #               'edge3': edge3, 'diag3': diag3,
-        #               'edge4': edge4}
         edgepoints = [diag4, *edge1, diag1, *edge2, diag2, *edge3, diag3, *edge4]
 
         mapping = {
-            (0, 1): [], (0, 2): [],  (0, 3): [],  (0, 4): [3],   (0, 5): [3],   (0, 6): [8],   (0, 7): [8], (0, 8): [], (0, 9): [],
-            (1, 2): [], (1, 3): [],  (1, 4): [3], (1, 5): [3],   (1, 6): [3,5], (1, 7): [0,8], (1, 8): [0], (1, 9): [0],
-            (2, 3): [], (2, 4): [3], (2, 5): [3], (2, 6): [3,5], (2, 7): [3,5], (2, 8): [0],   (2, 9): [0],
-            (3, 4): [], (3, 5): [],  (3, 6): [5], (3, 7): [5],   (3, 8): [5],   (3, 9): [0],
+            (0, 1): [], (0, 2): [],  (0, 3): [],  (0, 4): [3],   (0, 5): [3],
+            (0, 6): [8],   (0, 7): [8], (0, 8): [], (0, 9): [],
+            (1, 2): [], (1, 3): [],  (1, 4): [3], (1, 5): [3],   (1, 6): [3,5],
+            (1, 7): [0,8], (1, 8): [0], (1, 9): [0],
+            (2, 3): [], (2, 4): [3], (2, 5): [3], (2, 6): [3,5], (2, 7): [3,5],
+            (2, 8): [0],   (2, 9): [0],
+            (3, 4): [], (3, 5): [],  (3, 6): [5], (3, 7): [5],   (3, 8): [5],
+            (3, 9): [0],
             (4, 5): [], (4, 6): [5], (4, 7): [5], (4, 8): [5],   (4, 9): [5,8],
             (5, 6): [], (5, 7): [],  (5, 8): [],  (5, 9): [8],
             (6, 7): [], (6, 8): [],  (6, 9): [8],
@@ -820,12 +826,11 @@ class EnvironmentNoRotationsWithHeightmap(Environment):
         obs = {}
 
         color_depth_obs = {'color': (), 'depth': ()}
-        configs = self.locobot.get_camera_config()
-        for config in configs:
+        for config in self.agent_cams:
             color, depth, _ = self.render_camera(config)
             color_depth_obs['color'] += (color,)
             color_depth_obs['depth'] += (depth,)
-        cmap, hmap = utils.get_fused_heightmap(color_depth_obs, configs,
+        cmap, hmap = utils.get_fused_heightmap(color_depth_obs, self.agent_cams,
                                                self.task.bounds, pix_size=0.003125)
         obs['heightmap'] = (cmap, hmap)
         return obs

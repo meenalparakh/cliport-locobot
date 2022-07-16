@@ -146,14 +146,14 @@ class Locobot:
 
         image_size = (height, width)
         fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose()
-        CONFIG = [{
+        CONFIG = {
             'image_size': image_size,
             'intrinsics': intrinsics,
             'position': fp_cam_pos,
             'rotation': fp_cam_ori,
             'zrange': (z_near, z_far),
             'noise': False
-        }]
+        }
         return CONFIG
 
     def _setup_gripper(self):
