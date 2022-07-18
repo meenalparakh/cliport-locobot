@@ -68,7 +68,7 @@ class PickPlace():
             ee.release()
             timeout |= movep(prepick_pose)
 
-        return timeout
+        return timeout, None
 
 class LocobotPickPlace():
     """Pick and place primitive."""
@@ -76,7 +76,8 @@ class LocobotPickPlace():
     def __init__(self, height=0.2, speed=0.01):
         self.height, self.speed = height, speed
 
-    def __call__(self, movej, movep, ee, pose0, pose1, navigator = None):
+    def __call__(self, movej, movep, ee, pose0, pose1,
+                 navigator=None, obs_info_fn=None):
         pick_pose, place_pose = pose0, pose1
 
         print(f'pick pose: {pick_pose}, place_pose: {place_pose}')
@@ -92,6 +93,10 @@ class LocobotPickPlace():
         # if navigator is not None:
         success = navigator(prepick_pose[0][:2])
         print(f'Locobot moved to pick position: {success}')
+
+        obs1, info1 = obs_info_fn()
+
+        success &= movej('action')
         success &= movep(prepick_pose, tol=1e-2, speed=1.0)
         # Move towards pick pose until contact is detected.
         print(f'Locobot arm at prepick pose: {success}')
@@ -116,6 +121,9 @@ class LocobotPickPlace():
             success &= navigator(targ_pose[0][:2])
             print(f'Locobot moved at place pose: {success}')
 
+            obs2, info2 = obs_info_fn()
+
+            success &= movej('action')
             success &= movep(preplace_pose)
             print(f'Locobot arm at preplace pose: {success}')
 
@@ -126,14 +134,19 @@ class LocobotPickPlace():
             success &= movep(postplace_pose)
             print(f'Locobot arm at postplace pose: {success}')
 
+            success &= movej('home')
+            success = True
+            additional_info = {'obs': [obs1, obs2],
+                               'info': [info1, info2]}
         # Move to prepick pose if pick is not successful.
         else:
             ee.release()
-            success &= movep(prepick_pose)
+            movep(prepick_pose)
+            movej('home')
+            success = False
+            additional_info = None
 
-        success &= movej()
-        success = True
-        return (not success)
+        return (not success), additional_info
 
 def push(movej, movep, ee, pose0, pose1):  # pylint: disable=unused-argument
     """Execute pushing primitive.
@@ -174,4 +187,4 @@ def push(movej, movep, ee, pose0, pose1):  # pylint: disable=unused-argument
         timeout |= movep((target, rot), speed=0.003)
     timeout |= movep((pos1, rot), speed=0.003)
     timeout |= movep((over1, rot))
-    return timeout
+    return timeout, None

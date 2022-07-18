@@ -37,7 +37,6 @@ class RavensDataset(Dataset):
         self.n_episodes = 0
         self.images = self.cfg['dataset']['images']
         self.cache = self.cfg['dataset']['cache']
-        self.camera_type = self.cfg['dataset']['camera_type']
         self.n_demos = n_demos
         self.augment = augment
 
@@ -80,14 +79,28 @@ class RavensDataset(Dataset):
         """
         color, depth, action, reward, info = [], [], [], [], []
         for obs, act, r, i in episode:
-            color.append(obs['color'])
-            depth.append(obs['depth'])
+            if isinstance(obs, list):
+                substep_col = []
+                substep_depth = []
+                substep_info = []
+                for sub_step in range(3):
+                    substep_col.append(obs[sub_step]['color'])
+                    substep_depth.append(obs[sub_step]['depth'])
+                    substep_info.append(i[sub_step])
+
+                color.append(np.array(substep_col, dtype=np.uint8))
+                depth.append(np.array(substep_depth, dtype=np.float32))
+                info.append(substep_info)
+            else:
+                color.append(np.array([obs['color']], dtype=np.uint8))
+                depth.append(np.array([obs['depth']], dtype=np.float32))
+                info.append(i)
+
             action.append(act)
             reward.append(r)
-            info.append(i)
 
-        color = np.uint8(color)
-        depth = np.float32(depth)
+        # color = np.uint8(color)
+        # depth = np.float32(depth)
 
         def dump(data, field):
             field_path = os.path.join(self._path, field)
@@ -100,32 +113,36 @@ class RavensDataset(Dataset):
         def dump_image(data, field):
             episode = f'{self.n_episodes:06d}-{seed}'
             field_path = os.path.join(self._path, field, episode)
+            img_dims = 3 if field=='color' else 2
             if not os.path.exists(field_path):
                 os.makedirs(field_path)
-            num_steps = data.shape[0]
-            num_cameras = data.shape[1]
-
+            num_steps = len(data)
             for step in range(num_steps):
-                for camera in range(num_cameras):
-                    image = data[step, camera]
-                    fname = f'S{step}-C{camera}.png'
-                    if field == 'color':
-                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                        cv2.imwrite(os.path.join(field_path, fname), image)
-                    elif field == 'depth':
-                        sdepth = image * self.depth_scale
-                        # pdb.set_trace()
-                        # print('depth: ', sdepth)
-                        cv2.imwrite(os.path.join(field_path, fname), sdepth.astype(np.uint16))
-
+                for substep in range(data[step].shape[0]):
+                    num_cameras = data[step].shape[1]
+                    for camera in range(num_cameras):
+                        print(f'Step: {step}, Substep: {substep}, Camera:{camera}')
+                        image = data[step][substep][camera]
+                        fname = f'S{step}-U{substep}-C{camera}.png'
+                        if field == 'color':
+                            # image = np.uint8(image)
+                            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(os.path.join(field_path, fname), image)
+                        elif field == 'depth':
+                            sdepth = image * self.depth_scale
+                            # image = np.float32(image)
+                            # pdb.set_trace()
+                            # print('depth: ', sdepth)
+                            cv2.imwrite(os.path.join(field_path, fname),
+                                        sdepth.astype(np.uint16))
 
         dump_image(color, 'color')
         dump_image(depth, 'depth')
         dump(action, 'action')
         dump(reward, 'reward')
         dump(info, 'info')
-        dump({'num_steps': color.shape[0],
-              'num_cameras': color.shape[1]},
+        dump({'num_steps': len(color),
+              'num_cameras': len(color[0][0])},
              'side_info')
 
         self.n_episodes += 1
@@ -140,31 +157,40 @@ class RavensDataset(Dataset):
         def load_image_field(episode_id, field, fname):
 
             # path = os.path.join(self._path, 'side_info')
+
             side_info = load_field(episode_id, 'side_info', fname)
             # pickle.load(open(os.path.join(path, fname), 'rb'))
             num_steps = side_info['num_steps']
             num_cameras = side_info['num_cameras']
 
             dir = os.path.join(self._path, field, fname[:-4])
-            data = [None]*num_steps
+            data = [[]]*num_steps
             for step in range(num_steps):
-                data[step] = []
-                if self.camera_type == 'fp':
-                    cameras = [3]
-                else:
-                    cameras = range(num_cameras)
-                for cam in cameras:
-                    f = f'S{step}-C{cam}.png'
-                    if field == 'depth':
-                        image = cv2.imread(os.path.join(dir, f), cv2.IMREAD_UNCHANGED)
-                        image = image / self.depth_scale
-                    elif field == 'color':
-                        image = cv2.imread(os.path.join(dir, f))
-                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                        # print(f' inside load: {image}')
-                    data[step].append(image)
-
-            data = np.array(data)
+                for substep in range(3):
+                    f_check = f'S{step}-U{substep}-C0.png'
+                    exists = os.path.exists(os.path.join(dir, f_check)):
+                    if not exists:
+                        break
+                    data[step].append([])
+                    if self.cfg['dataset']['camera_type'] == 'fp':
+                        cameras = [3]
+                    else:
+                        cameras = range(num_cameras)
+                    for cam in cameras:
+                        f = f'S{step}-U{substep}-C{cam}.png'
+                        print(f'Reading: {f}')
+                        if field == 'depth':
+                            image = cv2.imread(os.path.join(dir, f), cv2.IMREAD_UNCHANGED)
+                            image = image / self.depth_scale
+                        elif field == 'color':
+                            image = cv2.imread(os.path.join(dir, f))
+                            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                            # print(f' inside load: {image}')
+                        data[step][substep].append(image)
+                data[step] = np.array(data[step])
+            # data = np.array(data)
+            print(f'Image data loaded: {field}')
+            [print(data[step].shape) for step in range(num_steps)]
             return data
 
         def load_field(episode_id, field, fname):
@@ -212,12 +238,6 @@ class RavensDataset(Dataset):
     def get_image(self, obs, cam_config=None):
         """Stack color and height images image."""
 
-        # if self.use_goal_image:
-        #   colormap_g, heightmap_g = utils.get_fused_heightmap(goal, configs)
-        #   goal_image = self.concatenate_c_h(colormap_g, heightmap_g)
-        #   input_image = np.concatenate((input_image, goal_image), axis=2)
-        #   assert input_image.shape[2] == 12, input_image.shape
-
         if cam_config is None:
             cam_config = self.cam_config
 
@@ -231,15 +251,48 @@ class RavensDataset(Dataset):
         assert img.shape == self.in_shape, img.shape
         return img
 
+    def get_image_wrapper(self, obs, info):
+        """Stack color and height images image."""
+
+        # if self.use_goal_image:
+        #   colormap_g, heightmap_g = utils.get_fused_heightmap(goal, configs)
+        #   goal_image = self.concatenate_c_h(colormap_g, heightmap_g)
+        #   input_image = np.concatenate((input_image, goal_image), axis=2)
+        #   assert input_image.shape[2] == 12, input_image.shape
+
+        assert ((obs.shape[0] == 3) or (obs.shape[0] == 1))
+        print('inside image_wrapper observation shape', obs.shape)
+        images = []
+        for substep in range(obs.shape[0]):
+            color = obs['color'][substep]
+            depth = obs['depth'][substep]
+            substep_obs = {'color': color, 'depth': depth}
+            cam_configs = info[substep]['cam_configs']
+            if self.camera_type == 'fp':
+                cam_configs = cam_configs[3:]
+            img = self.get_image(substep_obs, cam_configs)
+            images.append(img)
+
+        if obs.shape[0] == 1:
+            images = images*3
+
+        return images
+
+    def perturb_wrapper(self, imgs, pts_lst, theta_sigma=self.aug_theta_sigma):
+
+        for images
+
+        img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1],
+                                            theta_sigma=self.aug_theta_sigma)
+
     def process_sample(self, datum, augment=True):
         # Get training labels from data sample.
-        pdb.set_trace()
         (obs, act, _, info) = datum
-        cam_configs = info['cam_configs']
-        if self.camera_type == 'fp':
-            cam_configs = cam_configs[3:]
-
-        img = self.get_image(obs, cam_config=cam_configs)
+        # cam_configs = info['cam_configs']
+        # if self.camera_type == 'fp':
+        #     cam_configs = cam_configs[3:]
+        # img = self.get_image(obs, cam_config=cam_configs)
+        img = self.get_image_wrapper(obs, info)
 
         p0, p1 = None, None
         p0_theta, p1_theta = None, None
@@ -256,14 +309,15 @@ class RavensDataset(Dataset):
             p0_theta = 0
 
         # Data augmentation.
-        # plt.imsave('/Users/meenalp/Desktop/actual_image.png', img[:,:,:3]/255.0)
-        # plt.imsave('/Users/meenalp/Desktop/actual_himage.png', img[:,:,3])
+        plt.imsave('/Users/meenalp/Desktop/actual_image.png', img[:,:,:3]/255.0)
+        plt.imsave('/Users/meenalp/Desktop/actual_himage.png', img[:,:,3])
 
         if augment:
-            img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1], theta_sigma=self.aug_theta_sigma)
+            img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1],
+                                                theta_sigma=self.aug_theta_sigma)
 
-        # plt.imsave('/Users/meenalp/Desktop/augment_image.png', img[:,:,:3]/255.0)
-        # plt.imsave('/Users/meenalp/Desktop/augment_himage.png', img[:,:,3])
+        plt.imsave('/Users/meenalp/Desktop/augment_image.png', img[:,:,:3]/255.0)
+        plt.imsave('/Users/meenalp/Desktop/augment_himage.png', img[:,:,3])
 
         sample = {
             'img': img,
@@ -286,8 +340,9 @@ class RavensDataset(Dataset):
     def process_goal(self, goal, perturb_params):
         # Get goal sample.
         (obs, act, _, info) = goal
-        cam_configs = info['cam_configs']
-        img = self.get_image(obs, cam_config=cam_configs)
+        # cam_configs = info['cam_configs']
+        # img = self.get_image(obs, cam_config=cam_configs)
+        img = self.get_image_wrapper(obs, info)
 
         p0, p1 = None, None
         p0_theta, p1_theta = None, None

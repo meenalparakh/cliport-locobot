@@ -49,6 +49,7 @@ def main(cfg):
         episode, total_reward = [], 0
         seed += 2
 
+        seed = np.random.randint(0, 100)
         # Set seeds.
         np.random.seed(seed)
         random.seed(seed)
@@ -71,10 +72,22 @@ def main(cfg):
         # Rollout expert policy
         for _ in range(task.max_steps):
             act = agent.act(obs, info)
-            episode.append((obs, act, reward, info))
             lang_goal = info['lang_goal']
-            obs, reward, done, info = env.step(act)
+            _obs, _reward, _done, _info = env.step(act)
+            if isinstance(_obs, list):
+                episode.append(([obs, *(_obs[:2])],
+                                act,
+                                reward,
+                                [info, *(_info[:2])]))
+            else:
+                episode.append((obs, act, reward, info))
+
+            obs = _obs[-1]
+            reward = _reward
+            done = _done
+            info = _info[-1]
             total_reward += reward
+
             print(f'Total Reward: {total_reward:.3f} | Done: {done} | Goal: {lang_goal}')
             if done:
                 break

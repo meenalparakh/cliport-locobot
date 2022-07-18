@@ -271,24 +271,29 @@ class Environment(gym.Env):
         Returns:
           (obs, reward, done, info) tuple containing MDP step data.
         """
+        additional_info = None
+
         if action is not None:
-            timeout = self.task.primitive(self.movej,
-                                          self.movep,
-                                          self.ee,
-                                          action['pose0'],
-                                          action['pose1'],
-                                          navigator=self.motion_planner)
+            timeout, additional_info = self.task.primitive(self.movej,
+                                              self.movep,
+                                              self.ee,
+                                              action['pose0'],
+                                              action['pose1'],
+                                              navigator=self.motion_planner,
+                                              obs_info_fn=self.get_obs_and_info)
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
             if timeout:
-                self.agent_cams[-1] = self.locobot.get_camera_config()
-                obs = {'color': (), 'depth': ()}
-                for config in self.agent_cams:
-                    color, depth, _ = self.render_camera(config)
-                    obs['color'] += (color,)
-                    obs['depth'] += (depth,)
-                return obs, 0.0, True, self.info
+                # self.agent_cams[-1] = self.locobot.get_camera_config()
+                # obs = {'color': (), 'depth': ()}
+                # for config in self.agent_cams:
+                #     color, depth, _ = self.render_camera(config)
+                #     obs['color'] += (color,)
+                #     obs['depth'] += (depth,)
+                # return obs, 0.0, True, self.info
+                obs, info = self.get_obs_and_info()
+                return obs, 0.0, True, info
 
         # Step simulator asynchronously until objects settle.
         while not self.is_static:
@@ -299,12 +304,24 @@ class Environment(gym.Env):
         done = self.task.done()
 
         # Add ground truth robot state into info.
-        self.agent_cams[-1] = self.locobot.get_camera_config()
-        info.update(self.info)
-
-        obs = self._get_obs()
+        # self.agent_cams[-1] = self.locobot.get_camera_config()
+        # info.update(self.info)
+        #
+        # obs = self._get_obs()
+        obs, info = self.get_obs_and_info(info)
+        if additional_info is not None:
+            obs = [*(additional_info['obs']), obs]
+            info = [*(additional_info['info']), info]
 
         return obs, reward, done, info
+
+    def get_obs_and_info(self, info=None):
+        if info is None:
+            info = {}
+        self.agent_cams[-1] = self.locobot.get_camera_config()
+        obs = self._get_obs()
+        info.update(self.info)
+        return obs, info
 
     def step_simulation(self):
         self.pb_client.stepSimulation()
@@ -425,9 +442,14 @@ class Environment(gym.Env):
               collision_detector = False):
         success = False
         collision = False
-        if targj is None:
+
+        if targj == 'home':
             print('Moving the arm to home pose')
             targj = self.locobot.homej
+
+        elif targj == 'action':
+            print('Moving the arm to action pose')
+            targj = self.locobot.actionj
 
         for i in range(max_steps):
             currj = np.array(self.locobot.get_arm_jpos())
@@ -714,7 +736,7 @@ class Environment(gym.Env):
         # print(f'Current idx: {pt1_idx}')
         # self.move_to(self.ws_edgepts[pt1_idx], tol=0.1)
 
-        success = self.movej(self.locobot.homej)
+        success = self.movej('home')
         print(f'Setting pose to homej: {success}')
         # success &= _move(pt1_idx, target_idx, target_pos)
         edge_pt = np.array(self.ws_edgepts[0][target_idx])
@@ -723,9 +745,11 @@ class Environment(gym.Env):
         ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
         self.pb_client.resetBasePositionAndOrientation(self.bot_id, [*edge_pt, 0.001], ori)
 
+        while not self.is_static:
+            self.step_simulation()
         # success &= self.turn_to_point(target_pos, tol=tol_angle)
-        success &= self.movej(self.locobot.actionj)
-        print(f'Setting pose to actionj: {success}')
+        # success &= self.movej(self.locobot.actionj)
+        # print(f'Setting pose to actionj: {success}')
 
         return success
 
