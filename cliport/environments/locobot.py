@@ -23,7 +23,7 @@ def _get_default_camera_cfg():
     _C.ZFAR = 10
     _C.WIDTH = 640
     _C.HEIGHT = 480
-    _C.FOV = 60
+    _C.FOV = 90
     _ROOT_C = CN()
     _ROOT_C.CAM = CN()
     _ROOT_C.CAM.SIM = _C

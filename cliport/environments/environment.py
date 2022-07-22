@@ -631,20 +631,19 @@ class Environment(gym.Env):
         dx, dy = np.array(center) - np.array(bot_pos[:2])
         theta = np.arctan2(dy, dx)
 
-        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta-np.pi/6])
-        self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
         # self.rotate_base(theta-np.pi/6, relative=False)
         # while not self.is_static:
         #     self.step_simulation()
+
+        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta-np.pi/6])
+        self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
         for i in range(10):
             self.step_simulation()
         obs.append(self.get_obs_wrapper())
-        # self.rotate_base(theta, relative=False)
-        # obs.append(self.get_obs_wrapper())
-        # self.rotate_base(theta+np.pi/6, relative=False)
+
         ori = self.pb_client.getQuaternionFromEuler([0, 0, theta+np.pi/6])
         self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
-        while not self.is_static:
+        for i in range(10):
             self.step_simulation()
         obs.append(self.get_obs_wrapper())
 

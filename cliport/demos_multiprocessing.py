@@ -8,12 +8,12 @@ import random
 from cliport import tasks
 from cliport.dataset import RavensDataset
 from cliport.environments.environment import Environment
-
-from utils.multiprocessing_utils import UptownFunc
+import pdb
 
 @hydra.main(config_path='./cfg', config_name='data')
 def main(cfg):
     # Initialize environment and task.
+    print('################################################################################')
     env = Environment(
         cfg['assets_root'],
         disp=cfg['disp'],
@@ -27,9 +27,14 @@ def main(cfg):
     save_data = cfg['save_data']
 
     # Initialize scripted oracle agent and dataset.
-    agent = task.oracle(env)
+    agent = task.oracle(env, locobot=cfg['locobot'])
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], task.mode))
-    dataset = RavensDataset(data_path, cfg, n_demos=0, augment=False)
+
+
+
+
+
+    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False)
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
 
@@ -50,6 +55,7 @@ def main(cfg):
         episode, total_reward = [], 0
         seed += 2
 
+        seed = np.random.randint(0, 100)
         # Set seeds.
         np.random.seed(seed)
         random.seed(seed)
@@ -71,15 +77,32 @@ def main(cfg):
 
         # Rollout expert policy
         for _ in range(task.max_steps):
+            # pdb.set_trace()
+            obs = obs[-env.num_turns:]
             act = agent.act(obs, info)
-            episode.append((obs, act, reward, info))
             lang_goal = info['lang_goal']
-            obs, reward, done, info = env.step(act)
+            _obs, _reward, _done, _info = env.step(act)
+            for substep in range(len(_obs)):
+                print('Data collection:', _obs[substep]['configs'][3]['position'])
+            # if isinstance(_obs, list):
+            episode.append(([*obs, *(_obs[:-env.num_turns])],
+                            act,
+                            reward,
+                            info))
+            # else:
+            # episode.append((obs, act, reward, info))
+
+            # print('Step', info[1]['bot_pose'], info[1]['cam_configs'])
+            obs = _obs
+            reward = _reward
+            done = _done
+            info = _info
             total_reward += reward
+
             print(f'Total Reward: {total_reward:.3f} | Done: {done} | Goal: {lang_goal}')
             if done:
                 break
-        episode.append((obs, None, reward, info))
+        episode.append((obs[-env.num_turns:], None, reward, info))
 
         # End video recording
         if record:
@@ -91,4 +114,58 @@ def main(cfg):
 
 
 if __name__ == '__main__':
-    main()
+
+    action_path = os.path.join(data_path, 'action')
+
+    run = 0
+    if os.path.exists(action_path):
+        sorted_dirs = sorted(os.listdir(action_path))
+        process_lst = []
+        for fname in sorted_dirs:
+            process_lst.append(int(fname[1:fname.find('-')]))
+        if not (process_lst == []):
+            run = 1 + max(process_lst)
+            
+
+    exists = os.path.exists(args.dir)
+    if not exists:
+        os.makedirs(args.dir)
+
+
+    num_trajs_per_process = args.num_trajs_per_process
+    num_processes = args.num_trajs//num_trajs_per_process
+    num_processes_list = [num_trajs_per_process]*num_processes
+    remaining = args.num_trajs - (num_processes * num_trajs_per_process)
+    if remaining > 0:
+        num_processes_list.append(remaining)
+
+
+    arguments = []
+    run = 0
+
+    lst = [int(d[-5:]) for d in glob.glob(args.dir + '/*')]
+    if not (lst == []):
+        run = 1 + max(lst)
+
+    print(f'Run: {run}')
+
+    for i in range(len(num_processes_list)):
+        args_ = copy(args)
+        args_.num_trajs = num_processes_list[i]
+        args_.file_prefix = args.dir + f'/P{str(i + run).zfill(5)}'
+        os.makedirs(args_.file_prefix)
+        arguments.append(args_)
+
+    P = UptownFunc()
+    results = P.parallelise_function(arguments, collect_traj)
+
+    num_trajs_tried = 0
+    total_steps = 0
+
+    for result in results:
+        num_trajs_tried_, num_steps, _, _ = result
+        num_trajs_tried += num_trajs_tried_
+        total_steps += num_steps
+
+    print(f'Total trajectories tried: {num_trajs_tried}')
+    print(f'Total steps (datapoints): {total_steps}')

@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 # PIXEL_SIZE = 0.003125
 # CAMERA_CONFIG = cameras.RealSenseD415.CONFIG
 # BOUNDS = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
-NUM_SUBSTEPS = 4
+# NUM_SUBSTEPS = 4
 
 # Names as strings, REVERSE-sorted so longer (more specific) names are first.
 TASK_NAMES = (tasks.names).keys()
@@ -27,7 +27,9 @@ TASK_NAMES = sorted(TASK_NAMES)[::-1]
 class RavensDataset(Dataset):
     """A simple image dataset class."""
 
-    def __init__(self, path, cfg, store, cam_idx = [0, 1, 2, 3], n_demos=0, augment=False):
+    def __init__(self, path, cfg, store,
+                 cam_idx = [0, 1, 2, 3], n_demos=0, augment=False,
+                 track=True):
         """A simple RGB-D image dataset."""
         self._path = path
 
@@ -35,6 +37,7 @@ class RavensDataset(Dataset):
         self.sample_set = []
         self.max_seed = -1
         self.n_episodes = 0
+        self.file_prefix = 'TASK'
         self.images = self.cfg['dataset']['images']
         self.cache = self.cfg['dataset']['cache']
         self.n_demos = n_demos
@@ -51,18 +54,19 @@ class RavensDataset(Dataset):
         # self.pix_size = 0.002
         self.depth_scale = 1000.0
         # self.in_shape = (320, 160, 6)
-        self.in_shape = (320, 160, 6)
+        self.in_shape = (320, 192, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
-        self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0.00, 0.28]])
+        self.bounds = np.array([[0.2, 0.8], [-0.5, 0.5], [0.10, 0.28]])
 
         # Track existing dataset if it exists.
-        color_path = os.path.join(self._path, 'action')
-        if os.path.exists(color_path):
-            for fname in sorted(os.listdir(color_path)):
-                if '.pkl' in fname:
-                    seed = int(fname[(fname.find('-') + 1):-4])
-                    self.n_episodes += 1
-                    self.max_seed = max(self.max_seed, seed)
+        if track:
+            color_path = os.path.join(self._path, 'action')
+            if os.path.exists(color_path):
+                for fname in sorted(os.listdir(color_path)):
+                    if '.pkl' in fname:
+                        seed = int(fname[(fname.find('-') + 1):-4])
+                        self.n_episodes += 1
+                        self.max_seed = max(self.max_seed, seed)
 
         self._cache = {}
 
@@ -78,6 +82,21 @@ class RavensDataset(Dataset):
             episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
             self.set(episodes)
 
+    # def get_last_count(self):
+    #     color_path = os.path.join(self._path, 'action')
+    #     run = 0
+    #     if os.path.exists(color_path):
+    #         sorted_dirs = sorted(os.listdir(color_path))
+    #         process_lst = []
+    #         for fname in sorted_dirs:
+    #             # if '.pkl' in fname:
+    #             seed = int(fname[(fname.find('-') + 1):-4])
+    #             process_lst.append(int(fname[:fname.find('-')]))
+    #             self.n_episodes += 1
+    #             self.max_seed = max(self.max_seed, seed)
+    #         if not (process_lst == []):
+    #             run = 1 + max(process_lst)
+    #     return run
 
     def add(self, seed, episode):
         """Add an episode to the dataset.
@@ -135,8 +154,8 @@ class RavensDataset(Dataset):
 
                     for camera in range(num_cameras):
                         # print(f'Step: {step}, Substep: {substep}, Camera:{camera}')
-                        color = obs[substep]['image']['color'][camera]
-                        depth = obs[substep]['image']['depth'][camera]
+                        color = np.array(obs[substep]['image']['color'][camera], dtype=np.uint8)
+                        depth = np.array(obs[substep]['image']['depth'][camera], dtype=np.float32)
                         fname = f'S{step}-U{substep}-C{camera}.png'
                         # if field == 'color':
                             # image = np.uint8(image)
@@ -251,6 +270,11 @@ class RavensDataset(Dataset):
         # Get color and height maps from RGB-D images.
         cmap, hmap = utils.get_fused_heightmap(
             obs, cam_config, self.bounds, self.pix_size)
+
+        kernel = np.ones((2,2), np.uint8)
+        cmap = cv2.dilate(cmap, kernel, iterations=1)
+        hmap = cv2.dilate(hmap, kernel, iterations=1)
+
         img = np.concatenate((cmap,
                               hmap[Ellipsis, None],
                               hmap[Ellipsis, None],
