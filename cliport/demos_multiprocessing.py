@@ -6,14 +6,15 @@ import numpy as np
 import random
 
 from cliport import tasks
-from cliport.dataset import RavensDataset
+from cliport.dataset import RavensDataset, FOLDER_PREFIX
 from cliport.environments.environment import Environment
 import pdb
 
-@hydra.main(config_path='./cfg', config_name='data')
-def main(cfg):
-    # Initialize environment and task.
-    print('################################################################################')
+
+def collect_data(cfg):
+
+    run_id = cfg['run_id']
+
     env = Environment(
         cfg['assets_root'],
         disp=cfg['disp'],
@@ -25,16 +26,11 @@ def main(cfg):
     task.mode = cfg['mode']
     record = cfg['record']['save_video']
     save_data = cfg['save_data']
-
     # Initialize scripted oracle agent and dataset.
     agent = task.oracle(env, locobot=cfg['locobot'])
-    data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], task.mode))
 
-
-
-
-
-    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False)
+    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False, 
+                            process_num=run_id)
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
 
@@ -51,7 +47,8 @@ def main(cfg):
             raise Exception("Invalid mode. Valid options: train, val, test")
 
     # Collect training data from oracle demonstrations.
-    while dataset.n_episodes < cfg['n']:
+    num_trials = 0
+    while self.n_episodes < cfg['n']:
         episode, total_reward = [], 0
         seed += 2
 
@@ -60,7 +57,7 @@ def main(cfg):
         np.random.seed(seed)
         random.seed(seed)
 
-        print('Oracle demo: {}/{} | Seed: {}'.format(dataset.n_episodes + 1, cfg['n'], seed))
+        print('Oracle demo: {}/{} | Seed: {}'.format(self.n_episodes + 1, cfg['n'], seed))
 
         env.set_task(task)
         obs = env.reset()
@@ -73,7 +70,7 @@ def main(cfg):
 
         # Start video recording (NOTE: super slow)
         if record:
-            env.start_rec(f'{dataset.n_episodes+1:06d}')
+            env.start_rec(f'{self.n_episodes+1:06d}')
 
         # Rollout expert policy
         for _ in range(task.max_steps):
@@ -112,37 +109,65 @@ def main(cfg):
         if save_data and total_reward > 0.99:
             dataset.add(seed, episode)
 
+        num_trials += 1
 
-if __name__ == '__main__':
-
-    action_path = os.path.join(data_path, 'action')
-
-    run = 0
-    if os.path.exists(action_path):
-        sorted_dirs = sorted(os.listdir(action_path))
-        process_lst = []
-        for fname in sorted_dirs:
-            process_lst.append(int(fname[1:fname.find('-')]))
-        if not (process_lst == []):
-            run = 1 + max(process_lst)
-            
-
-    exists = os.path.exists(args.dir)
-    if not exists:
-        os.makedirs(args.dir)
+    return num_trials
 
 
-    num_trajs_per_process = args.num_trajs_per_process
-    num_processes = args.num_trajs//num_trajs_per_process
+@hydra.main(config_path='./cfg', config_name='data')
+def main(cfg):
+    # Initialize environment and task.
+    print('################################################################################')
+
+    num_trajs_per_process = cfg['trajs_per_process']
+    num_processes = cfg['n']//num_trajs_per_process
     num_processes_list = [num_trajs_per_process]*num_processes
-    remaining = args.num_trajs - (num_processes * num_trajs_per_process)
+    remaining = cfg['n'] - (num_processes * num_trajs_per_process)
     if remaining > 0:
         num_processes_list.append(remaining)
 
 
-    arguments = []
-    run = 0
+    data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], cfg['mode']))
+    # action_path = os.path.join(data_path, 'action')
 
+    run = 0
+    if os.path.exists(action_path):
+        sorted_dirs = sorted(os.listdir(data_path))
+        process_lst = []
+        for fname in sorted_dirs:
+            start = fname.find(FOLDER_PREFIX) + len(FOLDER_PREFIX)
+            process_lst.append(int(fname[start:]))
+        if not (process_lst == []):
+            run = 1 + max(process_lst)
+
+    arguments = []
+
+    for i in range(len(num_processes_list)):
+        cfg_ = copy(cfg)
+        cfg_['run_id'] = run + i
+        cfg_['n'] = num_processes_list[i]
+        # cfg_.file_prefix = args.dir + f'/P{str(i + run).zfill(5)}'
+        # os.makedirs(args_.file_prefix)
+        arguments.append(cfg_)
+
+    P = UptownFunc()
+    results = P.parallelise_function(arguments, collect_data)
+
+    num_trajs_tried = 0
+    total_steps = 0
+
+    for result in results:
+        num_trajs_tried_ = result
+        num_trajs_tried += num_trajs_tried_
+
+    print(f'Total trajectories tried: {num_trajs_tried}')
+    print('Successful trajectories:', cfg['n'])
+    print('Success rate (approx):', cfg['n']/num_trajs_tried)
+
+
+if __name__ == '__main__':
+
+    run = 0
     lst = [int(d[-5:]) for d in glob.glob(args.dir + '/*')]
     if not (lst == []):
         run = 1 + max(lst)

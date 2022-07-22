@@ -23,13 +23,14 @@ import matplotlib.pyplot as plt
 # Names as strings, REVERSE-sorted so longer (more specific) names are first.
 TASK_NAMES = (tasks.names).keys()
 TASK_NAMES = sorted(TASK_NAMES)[::-1]
+FOLDER_PREFIX = 'PROCESS'
 
 class RavensDataset(Dataset):
     """A simple image dataset class."""
 
     def __init__(self, path, cfg, store,
                  cam_idx = [0, 1, 2, 3], n_demos=0, augment=False,
-                 track=True):
+                 track=False, process_num=0):
         """A simple RGB-D image dataset."""
         self._path = path
 
@@ -37,7 +38,8 @@ class RavensDataset(Dataset):
         self.sample_set = []
         self.max_seed = -1
         self.n_episodes = 0
-        self.file_prefix = 'TASK'
+        self.process_num = process_num
+        self.folder_prefix = FOLDER_PREFIX + str(self.process_num).zfill(5)
         self.images = self.cfg['dataset']['images']
         self.cache = self.cfg['dataset']['cache']
         self.n_demos = n_demos
@@ -59,44 +61,43 @@ class RavensDataset(Dataset):
         self.bounds = np.array([[0.2, 0.8], [-0.5, 0.5], [0.10, 0.28]])
 
         # Track existing dataset if it exists.
-        if track:
-            color_path = os.path.join(self._path, 'action')
-            if os.path.exists(color_path):
-                for fname in sorted(os.listdir(color_path)):
-                    if '.pkl' in fname:
-                        seed = int(fname[(fname.find('-') + 1):-4])
-                        self.n_episodes += 1
-                        self.max_seed = max(self.max_seed, seed)
+        # if track:
+        #     color_path = os.path.join(self._path, 'action')
+        #     if os.path.exists(color_path):
+        #         for fname in sorted(os.listdir(color_path)):
+        #             if '.pkl' in fname:
+        #                 seed = int(fname[(fname.find('-') + 1):-4])
+        #                 self.n_episodes += 1
+        #                 self.max_seed = max(self.max_seed, seed)
 
         self._cache = {}
+
+        if store:
+            path = os.path.join(self._path, self.folder_prefix)
+            os.makedirs(path)
 
         if self.n_demos > 0:
             self.images = self.cfg['dataset']['images']
             self.cache = self.cfg['dataset']['cache']
 
             # Check if there sufficient demos in the dataset
+            episode_paths = self.get_epsiode_paths()
+            self.n_episodes = len(episode_paths)
             if self.n_demos > self.n_episodes:
                 raise Exception(f"Requested training on {self.n_demos} demos, "
                 "but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
 
             episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
-            self.set(episodes)
+            self.set(episode_paths, episodes)
 
-    # def get_last_count(self):
-    #     color_path = os.path.join(self._path, 'action')
-    #     run = 0
-    #     if os.path.exists(color_path):
-    #         sorted_dirs = sorted(os.listdir(color_path))
-    #         process_lst = []
-    #         for fname in sorted_dirs:
-    #             # if '.pkl' in fname:
-    #             seed = int(fname[(fname.find('-') + 1):-4])
-    #             process_lst.append(int(fname[:fname.find('-')]))
-    #             self.n_episodes += 1
-    #             self.max_seed = max(self.max_seed, seed)
-    #         if not (process_lst == []):
-    #             run = 1 + max(process_lst)
-    #     return run
+    def get_epsiode_paths(self):
+        # for fname in sorted(os.listdir(self._path)):
+        #     if FOLDER_PREFIX in fname:
+        #         def get_data_files(dirname):
+        return glob.glob(self._path + "/" + FOLDER_PREFIX + "*/episode*/action.pkl")
+                # seed = int(fname[(fname.find('-') + 1):-4])
+                # episode_path =  f'{self.n_episodes:03d}-{seed}'
+                # break
 
     def add(self, seed, episode):
         """Add an episode to the dataset.
@@ -105,6 +106,11 @@ class RavensDataset(Dataset):
           seed: random seed used to initialize the episode.
           episode: list of (obs, act, reward, info) tuples.
         """
+
+        episode_fname = f'episode{self.n_episodes:03d}-{seed}'
+        episode_path = os.path.join(self._path, self.folder_prefix, episode_fname)
+        os.makedirs(episode_path)
+
         observation, action, reward, info = [], [], [], []
         for obs, act, r, i in episode:
             observation.append(obs)
@@ -117,17 +123,15 @@ class RavensDataset(Dataset):
                 print("saving substep", substep, ":", obs[substep]['configs'][3]['position'])
 
         def dump(data, field):
-            field_path = os.path.join(self._path, field)
-            if not os.path.exists(field_path):
-                os.makedirs(field_path)
-            fname = f'{self.n_episodes:06d}-{seed}.pkl'  # -{len(episode):06d}
-            with open(os.path.join(field_path, fname), 'wb') as f:
+            
+            field_fname = f'{field}.pkl'  
+            field_path = os.path.join(episode_path, field_fname)
+            with open(field_path, 'wb') as f:
                 pickle.dump(data, f)
 
         def dump_image(observation):
-            episode = f'{self.n_episodes:06d}-{seed}'
-            color_path = os.path.join(self._path, 'color', episode)
-            depth_path = os.path.join(self._path, 'depth', episode)
+            color_path = os.path.join(episode_path, 'color')
+            depth_path = os.path.join(episode_path, 'depth')
             if not os.path.exists(color_path):
                 os.makedirs(color_path)
                 os.makedirs(depth_path)
@@ -177,21 +181,22 @@ class RavensDataset(Dataset):
         self.n_episodes += 1
         self.max_seed = max(self.max_seed, seed)
 
-    def set(self, episodes):
+    def set(self, episode_paths, episodes):
         """Limit random samples to specific fixed set."""
+        self.episode_paths = episode_paths
         self.sample_set = episodes
 
-    def load(self, episode_id, images=True, cache=False):
+    def load(self, episode_path, images=True, cache=False):
 
-        def load_image_field(episode_id, fname):
-            side_obs = load_field(episode_id, 'side_obs', fname)
+        def load_image_field(episode_path, side_obs):
+            
             num_steps = len(side_obs)
             num_cameras = len(side_obs[0]['configs'][0])
             print(f'No of steps: {num_steps}')
             print(f'No of cameras: {num_cameras}')
 
-            color_dir = os.path.join(self._path, 'color', fname[:-4])
-            depth_dir = os.path.join(self._path, 'depth', fname[:-4])
+            color_dir = os.path.join(self._path, 'color', self.folder_prefix, fname[:-4])
+            depth_dir = os.path.join(self._path, 'depth', self.folder_prefix, fname[:-4])
 
             obs = []
             for step in range(num_steps):
@@ -225,41 +230,49 @@ class RavensDataset(Dataset):
 
             return obs
 
-        def load_field(episode_id, field, fname):
+        def load_field(episode_path, field):
 
+            name = episode_path[episode_path.find(FOLDER_PREFIX):]
             if cache:
-                if episode_id in self._cache:
-                    if field in self._cache[episode_id]:
-                        return self._cache[episode_id][field]
+                if name in self._cache:
+                    if field in self._cache[name]:
+                        return self._cache[name][field]
                 else:
-                    self._cache[episode_id] = {}
-            path = os.path.join(self._path, field)
+                    self._cache[name] = {}
+
+            # path = os.path.join(self._path, self.folder_prefix, field)
             if field == 'image':
-                data = load_image_field(episode_id, fname)
+                side_obs = pickle.load(open(os.path.join(episode_path, 
+                                       'side_obs'), 'rb'))
+                data = load_image_field(episode_path, side_obs)
             else:
-                data = pickle.load(open(os.path.join(path, fname), 'rb'))
+                fname = f'{field}.pkl'
+                data = pickle.load(open(os.path.join(episode_path, fname), 'rb'))
             if cache:
-                self._cache[episode_id][field] = data
+                self._cache[name][field] = data
             return data
 
         # Get filename and random seed used to initialize episode.
         seed = None
-        path = os.path.join(self._path, 'action')
-        for fname in sorted(os.listdir(path)):
-            if f'{episode_id:06d}' in fname:
-                seed = int(fname[(fname.find('-') + 1):-4])
 
-                # Load data.
-                action = load_field(episode_id, 'action', fname)
-                reward = load_field(episode_id, 'reward', fname)
-                info = load_field(episode_id, 'info', fname)
-                obs = load_field(episode_id, 'image', fname)
-                # Reconstruct episode.
-                episode = []
-                for i in range(len(action)):
-                    # obs = {'color': color[i], 'depth': depth[i]} if images else {}
-                    episode.append((obs[i], action[i], reward[i], info[i]))
-                return episode, seed
+        # episode_name = f'episode{self.n_episodes:03d}'
+        # episode_path = os.path.join(self._path, FOLDER_PREFIX + str(process_id).zfill(5))
+
+        # for fname in sorted(os.listdir(episode_path)):
+        #     if f'episode{episode_id:03d}' in fname:
+        #         seed = int(fname[(fname.find('-') + 1):-4])
+        #         episode_path =  f'episode{self.n_episodes:03d}-{seed}'
+        #         break
+
+        action = load_field(episode_path, 'action')
+        action = load_field(episode_path, 'reward')
+        action = load_field(episode_path, 'info')
+        action = load_field(episode_path, 'image')
+
+        episode = []
+        for i in range(len(action)):
+            episode.append((obs[i], action[i], reward[i], info[i]))
+        return episode, seed
 
     def get_image(self, obs, cam_config=None):
         """Stack color and height images image."""
@@ -429,7 +442,8 @@ class RavensDataset(Dataset):
             episode_id = np.random.choice(self.sample_set)
         else:
             episode_id = np.random.choice(range(self.n_episodes))
-        episode, _ = self.load(episode_id, self.images, self.cache)
+        episode_path = self.episode_paths[episode_id]
+        episode, _ = self.load(episode_path, self.images, self.cache)
 
         # Is the task sequential like stack-block-pyramid-seq?
         is_sequential_task = '-seq' in self._path.split("/")[-1]
