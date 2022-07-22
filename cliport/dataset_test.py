@@ -11,6 +11,8 @@ import hydra
 import pdb
 import pickle
 import matplotlib.pyplot as plt
+import numpy as np
+import cv2
 
 @hydra.main(config_path="./cfg", config_name='train')
 def main(cfg):
@@ -25,23 +27,48 @@ def main(cfg):
 
     # Datasets
     dataset_type = cfg['dataset']['type']
-    if 'multi' in dataset_type:
-        train_ds = RavensMultiTaskDataset(data_dir, cfg, group=task, mode='train', n_demos=n_demos, augment=True)
-        val_ds = RavensMultiTaskDataset(data_dir, cfg, group=task, mode='val', n_demos=n_val, augment=False)
-    else:
-        train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg, n_demos=n_demos, augment=True)
-        val_ds = RavensDataset(os.path.join(data_dir, '{}-val'.format(task)), cfg, n_demos=n_val, augment=False)
 
-    # Initialize agent
-    # pdb.set_trace()
-    sample, goal = train_ds[0]
+    train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg,
+                            store=False, cam_idx=[3], n_demos=n_demos, augment=False)
 
-    image = sample['img']
-    cmap = image[:,:,:3]/255.0
-    hmap = image[:,:,3]
+    data = train_ds.load(0)
+    episode, _  = data
 
-    # plt.imsave('/Users/meenalp/Desktop/final_image.png', cmap)
-    # plt.imsave('/Users/meenalp/Desktop/final_himage.png', hmap)
+    print(f'Episode length: {len(episode)}')
+    for step in range(len(episode)):
+        sample = episode[step]
+        obs, act, reward, info = sample
+
+        datapoint = train_ds.process_sample(sample, augment=False)
+        # print(datapoint)
+        # print(len(datapoint['img']))
+        # print(datapoint['p0'])
+        for substep in range(len(datapoint['img'])):
+            plt.imsave(f'/Users/meenalp/Desktop/step_{step}_{substep}.jpeg', obs[substep]['image']['color'][0])
+            # plt.imsave(f'/Users/meenalp/Desktop/step_{step}_depth_{i}.jpeg',
+            #             obs[substep]['image']['color'][0]/np.max(obs[substep]['image']['color'][0]))
+            # print('Cam config:', info[i]['cam_configs'][3])
+
+            color = cv2.cvtColor(datapoint['img'][substep][:,:,:3], cv2.COLOR_RGB2BGR)
+            depth = datapoint['img'][substep][:,:, 3]
+            height, width = color.shape[:2]
+            if datapoint['p0'] is None:
+                break
+            p0, p1 = datapoint['p0'][substep], datapoint['p1'][substep]
+            d0 = max(0, p0[1] - 20), max(0, p0[0] - 20)
+            d0_ = min(width, p0[1] + 20), min(height, p0[0] + 20)
+            d1 = max(0, p1[1] - 20), max(0, p1[0] - 20)
+            d1_ = min(width, p1[1] + 20), min(height, p1[0] + 20)
+
+            # print(color.shape)
+            print('p0, p1', p0, p1)
+            print('width, height', width, height)
+            print('d0', np.array(d0) - d0_)
+            print('d1', np.array(d1) - d1_)
+            cv2.rectangle(color, d0, d0_, (0, 0, 255), 5)
+            cv2.rectangle(color, d1, d1_, (0, 255, 0), 5)
+
+            cv2.imwrite(f'/Users/meenalp/Desktop/labelled_img_step_{step}_{substep}.png', color)
 
 
 if __name__ == '__main__':

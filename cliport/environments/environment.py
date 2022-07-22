@@ -17,7 +17,7 @@ import pybullet as p
 from airobot.sensor.camera.rgbdcam_pybullet import RGBDCameraPybullet
 from airobot.utils.pb_util import create_pybullet_client
 from yacs.config import CfgNode as CN
-
+from copy import deepcopy
 # import locobot
 # from locobot.sim.locobot import Locobot
 from cliport.environments.locobot import Locobot
@@ -29,7 +29,6 @@ import random
 PLACE_STEP = 0.0003
 PLACE_DELTA_THRESHOLD = 0.005
 
-UR5_URDF_PATH = 'ur5/ur5.urdf'
 WORKSPACE_URDF_PATH = 'table/table.urdf'
 PLANE_URDF_PATH = 'plane/plane.urdf'
 LOCOBOT_URDF = 'locobot_description/locobot.urdf'
@@ -83,6 +82,8 @@ class Environment(gym.Env):
         self.step_counter = 0
 
         self.assets_root = assets_root
+        self.table_center = [0.5, 0]
+        self.num_turns = 2
 
         color_tuple = [
             gym.spaces.Box(0, 255, config['image_size'] + (3,), dtype=np.uint8)
@@ -116,30 +117,12 @@ class Environment(gym.Env):
                                                 realtime=realtime,
                                                 opengl_render=opengl_render)
 
-        # Start PyBullet.
-        # disp_option = p.DIRECT
-        # if disp:
-        #     disp_option = p.GUI
-        #     if shared_memory:
-        #         disp_option = p.SHARED_MEMORY
-        # client = p.connect(disp_option)
-        # file_io = p.loadPlugin('fileIOPlugin', physicsClientId=client)
-        # if file_io < 0:
-        #     raise RuntimeError('pybullet: cannot load FileIO!')
-        # if file_io >= 0:
-        #     p.executePluginCommand(
-        #         file_io,
-        #         textArgument=assets_root,
-        #         intArgs=[p.AddFileIOAction],
-        #         physicsClientId=client)
-
         self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_GUI, 1)
         self.pb_client.setPhysicsEngineParameter(enableFileCaching=0)
         self.pb_client.setAdditionalSearchPath(assets_root)
         self.pb_client.setAdditionalSearchPath(tempfile.gettempdir())
         self.pb_client.setTimeStep(1. / hz)
 
-        # If using --disp, move default camera closer to the scene.
         if disp:
             target = self.pb_client.getDebugVisualizerCamera()[11]
             self.pb_client.resetDebugVisualizerCamera(
@@ -147,7 +130,6 @@ class Environment(gym.Env):
                 cameraYaw=90,
                 cameraPitch=-25,
                 cameraTargetPosition=target)
-
         if task:
             self.set_task(task)
 
@@ -221,14 +203,9 @@ class Environment(gym.Env):
 
         self.workspace = pybullet_utils.load_urdf(
             self.pb_client, os.path.join(self.assets_root, WORKSPACE_URDF_PATH),
-                                         [0.5, 0, 0])
+                                         [*self.table_center, 0])
 
         self.ws_edgepts = self.get_ws_edgepts(show=False, margin = 0.25)
-        # self.ws_outer_edgepts = self.get_ws_edgepts(show=False, margin = 0.4)
-        # Load UR5 robot arm equipped with suction end effector.
-        # TODO(andyzeng): add back parallel-jaw grippers.
-        # self.ur5 = pybullet_utils.load_urdf(
-        #     p, os.path.join(self.assets_root, UR5_URDF_PATH))
         self.bot_id = pybullet_utils.load_urdf(self.pb_client,
                                                os.path.join(self.assets_root,
                                                             LOCOBOT_URDF),
@@ -241,22 +218,11 @@ class Environment(gym.Env):
         self.ee = self.task.ee(self.assets_root, self.pb_client, self.bot_id,
                                self.locobot.ee_link, self.obj_ids)
         self.ee_tip = self.locobot.ee_link + 1 #10  # Link ID of suction cup.
-
-        # Get revolute joint indices of robot (skip fixed joints).
-        # n_joints = p.getNumJoints(self.ur5)
-        # joints = [p.getJointInfo(self.ur5, i) for i in range(n_joints)]
-        # self.joints = [j[0] for j in joints if j[2] == p.JOINT_REVOLUTE]
-
-        # # Move robot to home joint configuration.
-        # for i in range(len(self.joints)):
-        #     p.resetJointState(self.ur5, self.joints[i], self.homej[i])
-
-        # Reset end effector.
         self.ee.release()
-
+        # self.turn_to_point(self.table_center, tol=np.pi/18)
         # Reset task.
         self.task.reset(self)
-        self.agent_cams[-1] = self.locobot.get_camera_config()
+        self.agent_cams[-1] = self.locobot.get_camera_config(bot_frame=False)
         # Re-enable rendering.
         self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_RENDERING, 1)
 
@@ -271,29 +237,20 @@ class Environment(gym.Env):
         Returns:
           (obs, reward, done, info) tuple containing MDP step data.
         """
-        additional_info = None
+        substep_obs = []
 
         if action is not None:
-            timeout, additional_info = self.task.primitive(self.movej,
-                                              self.movep,
-                                              self.ee,
-                                              action['pose0'],
-                                              action['pose1'],
-                                              navigator=self.motion_planner,
-                                              obs_info_fn=self.get_obs_and_info)
+            timeout, substep_obs = self.task.primitive(self, action)
+            for substep in range(len(substep_obs)):
+                print('Inside step: substep', substep,
+                        substep_obs[substep]['configs'][3]['position'])
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
             if timeout:
-                # self.agent_cams[-1] = self.locobot.get_camera_config()
-                # obs = {'color': (), 'depth': ()}
-                # for config in self.agent_cams:
-                #     color, depth, _ = self.render_camera(config)
-                #     obs['color'] += (color,)
-                #     obs['depth'] += (depth,)
-                # return obs, 0.0, True, self.info
-                obs, info = self.get_obs_and_info()
-                return obs, 0.0, True, info
+                obs = self.get_obs_wrapper()
+                # assert False
+                return [obs], 0.0, True, self.info
 
         # Step simulator asynchronously until objects settle.
         while not self.is_static:
@@ -303,25 +260,29 @@ class Environment(gym.Env):
         reward, info = self.task.reward() if action is not None else (0, {})
         done = self.task.done()
 
-        # Add ground truth robot state into info.
-        # self.agent_cams[-1] = self.locobot.get_camera_config()
-        # info.update(self.info)
-        #
-        # obs = self._get_obs()
-        obs, info = self.get_obs_and_info(info)
-        if additional_info is not None:
-            obs = [*(additional_info['obs']), obs]
-            info = [*(additional_info['info']), info]
+        obs = self.turn_around_center(self.table_center)
+        substep_obs.extend(obs)
+        # obs = [*substep_obs, *obs]
 
-        return obs, reward, done, info
-
-    def get_obs_and_info(self, info=None):
-        if info is None:
-            info = {}
-        self.agent_cams[-1] = self.locobot.get_camera_config()
-        obs = self._get_obs()
         info.update(self.info)
-        return obs, info
+        # print(f'type {type(obs)}, {type(info)}')
+        return substep_obs, reward, done, info
+
+    def get_obs_wrapper(self):
+
+        self.agent_cams[-1] = self.locobot.get_camera_config(bot_frame=False)
+        obs = self._get_obs()
+
+        bot_pose = self.locobot.get_base_pose()
+        configs = deepcopy(self.agent_cams)
+        bot_jpos= self.locobot.get_arm_jpos()
+        lang_goal = self.get_lang_goal()
+
+        return {'image': obs,
+                'configs': configs,
+                'bot_pose': bot_pose,
+                'bot_jpos': bot_jpos,
+                'lang_goal': lang_goal}
 
     def step_simulation(self):
         self.pb_client.stepSimulation()
@@ -338,8 +299,12 @@ class Environment(gym.Env):
         color, _, _ = self.render_camera()
         return color
 
-    def render_camera(self, config, image_size=None, shadow=1):
+    def render_camera(self, config, fp=False, image_size=None, shadow=1):
         """Render RGB-D image with specified camera configuration."""
+
+        # if fp:
+        #     return self.locobot.get_fp_images()
+
         if not image_size:
             image_size = config['image_size']
 
@@ -410,10 +375,12 @@ class Environment(gym.Env):
                 dim = self.pb_client.getVisualShapeData(obj_id)[0][3]
                 info[obj_id] = (pos, rot, dim)
 
-        info['bot_pose'] = self.locobot.get_base_pose()
-        info['cam_configs'] = self.agent_cams
-        info['bot_jpos'] = self.locobot.get_arm_jpos()
+        # info['bot_pose'] = self.locobot.get_base_pose()
+        # info['cam_configs'] = self.agent_cams
+        # info['bot_jpos'] = self.locobot.get_arm_jpos()
         info['lang_goal'] = self.get_lang_goal()
+        # print('Bot pose', info['bot_pose'])
+        # print('Cam config', info['cam_configs'][3]['position'])
         return info
 
     def set_task(self, task):
@@ -438,17 +405,15 @@ class Environment(gym.Env):
 
         return bodies, (len(bodies) > 0)
 
-    def movej(self, targj=None, tol=1e-2, speed=0.5, max_steps=100,
+    def movej(self, targj=None, p=None, tol=1e-2, speed=0.5, max_steps=100,
               collision_detector = False):
         success = False
         collision = False
 
-        if targj == 'home':
-            print('Moving the arm to home pose')
+        if p == 'home':
             targj = self.locobot.homej
 
-        elif targj == 'action':
-            print('Moving the arm to action pose')
+        elif p == 'action':
             targj = self.locobot.actionj
 
         for i in range(max_steps):
@@ -468,39 +433,6 @@ class Environment(gym.Env):
             self.step_simulation()
 
         return success
-        # '''
-        # Arguments: targj: [joint1, joint2, joint3, joint4, joint5]
-        # '''
-        # if targj is None:
-        #     print('Moving the arm to home pose')
-        #     targj = self.locobot.homej
-        #
-        # success = False
-        # collision = False
-        # t0 = time.time()
-        # while (time.time() - t0) < t_lim:
-        # # for i in range(max_steps):
-        #     currj = np.array(self.locobot.get_arm_jpos())
-        #     diffj = targj - currj
-        #
-        #     if collision_detector:
-        #         collision = self.detect_objects_in_ee()[1]
-        #     if all(np.abs(diffj) < tol) or collision:
-        #         success = True
-        #         break
-        #
-        #     norm = np.linalg.norm(diffj)
-        #     v = diffj / norm if norm > 0 else 0
-        #     v = min(1, diffj)
-        #     stepj = currj + v * speed
-        #     self.locobot.set_arm_jpos(stepj)
-        #
-        #     self.step_simulation()
-        #
-        # if not success:
-        #     print(f'Warning: movej exceeded {t_lim} second timeout. Skipping.')
-        #
-        # return success
 
     def start_rec(self, video_filename):
         assert self.record_cfg
@@ -531,7 +463,7 @@ class Environment(gym.Env):
 
     def add_video_frame(self):
         # Render frame.
-        config = self.locobot.get_camera_config()[0]
+        config = self.agent_cams[0]
         image_size = (self.record_cfg['video_height'], self.record_cfg['video_width'])
         color, depth, _ = self.render_camera(config, image_size, shadow=0)
         color = np.array(color)
@@ -693,34 +625,38 @@ class Environment(gym.Env):
         success = self.rotate_base(theta, relative = False, tol = tol)
         return success
 
-    def motion_planner(self, target_pos, tol_dist=0.50, tol_angle=np.pi/6):
+    def turn_around_center(self, center):
+        obs = []
+        bot_pos = self.locobot.get_base_pose()[0]
+        dx, dy = np.array(center) - np.array(bot_pos[:2])
+        theta = np.arctan2(dy, dx)
 
-        # def _move(pt1_idx, pt2_idx, _target_pos):
-        #     if pt1_idx < pt2_idx:
-        #         keypoints = self.ws_edgepts[1][(pt1_idx, pt2_idx)]
-        #     else:
-        #         keypoints = self.ws_edgepts[1][(pt2_idx, pt1_idx)]
-        #         keypoints = keypoints[::-1]
-        #
-        #     for pt_idx in keypoints:
-        #         pt_coords = self.ws_outer_edgepts[0][pt_idx]
-        #         success, found = self.move_to(pt_coords, tol=0.1,
-        #                         additional_target_position=_target_pos)
-        #         if found:
-        #             return True
-        #         print(f'Moved to {pt_idx}')
-        #
-        #     target_edgept = self.ws_edgepts[0][pt2_idx]
-        #     self.move_to(target_edgept, tol=0.1,
-        #                  additional_target_position=_target_pos)
-        #
-        #     return True
-        #
+        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta-np.pi/6])
+        self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
+        # self.rotate_base(theta-np.pi/6, relative=False)
+        # while not self.is_static:
+        #     self.step_simulation()
+        for i in range(10):
+            self.step_simulation()
+        obs.append(self.get_obs_wrapper())
+        # self.rotate_base(theta, relative=False)
+        # obs.append(self.get_obs_wrapper())
+        # self.rotate_base(theta+np.pi/6, relative=False)
+        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta+np.pi/6])
+        self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
+        while not self.is_static:
+            self.step_simulation()
+        obs.append(self.get_obs_wrapper())
+
+        return obs
+
+    def motion_planner(self, target_pos, tol_dist=0.52, tol_angle=np.pi/6):
+
         target_idx= None
         for id, pt in enumerate(self.ws_edgepts[0]):
             # print(id, pt)
             d = np.linalg.norm(np.array(pt) - target_pos)
-            print(f'Distance of {target_pos} from {id} ({pt}): {d}, ')
+            # print(f'Distance of {target_pos} from {id} ({pt}): {d}, ')
             if d < tol_dist:
                 target_idx = id
                 print(f'Target index: {target_idx}')
@@ -729,14 +665,8 @@ class Environment(gym.Env):
         if target_idx is None:
             import pdb; pdb.set_trace()
             raise RuntimeError(f'No edgepoint is within {tol_dist} of edgepoints.')
-        #
-        # cur_pos = np.array(self.locobot.get_base_pose()[0][:2])
-        # dist = [np.linalg.norm(cur_pos-pt) for pt in self.ws_edgepts[0]]
-        # pt1_idx = np.argmin(dist)
-        # print(f'Current idx: {pt1_idx}')
-        # self.move_to(self.ws_edgepts[pt1_idx], tol=0.1)
 
-        success = self.movej('home')
+        success = self.movej(p='home')
         print(f'Setting pose to homej: {success}')
         # success &= _move(pt1_idx, target_idx, target_pos)
         edge_pt = np.array(self.ws_edgepts[0][target_idx])
@@ -747,9 +677,6 @@ class Environment(gym.Env):
 
         while not self.is_static:
             self.step_simulation()
-        # success &= self.turn_to_point(target_pos, tol=tol_angle)
-        # success &= self.movej(self.locobot.actionj)
-        # print(f'Setting pose to actionj: {success}')
 
         return success
 
@@ -764,6 +691,9 @@ class Environment(gym.Env):
             obs['color'] += (color,)
             obs['depth'] += (depth,)
 
+        # color, depth, _ = self.render_camera(None, fp=True)
+        # obs['color'] += (color,)
+        # obs['depth'] += (depth,)
         return obs
 
     def get_ws_edgepts(self, margin=0.25, show=False):
@@ -781,30 +711,15 @@ class Environment(gym.Env):
         diag3 = (xlim[1] + diag, ylim[0] - diag)
         diag4 = (xlim[0] - diag, ylim[0] - diag)
 
-        edgepoints = [diag4, *edge1, diag1, *edge2, diag2, *edge3, diag3, *edge4]
-
-        mapping = {
-            (0, 1): [], (0, 2): [],  (0, 3): [],  (0, 4): [3],   (0, 5): [3],
-            (0, 6): [8],   (0, 7): [8], (0, 8): [], (0, 9): [],
-            (1, 2): [], (1, 3): [],  (1, 4): [3], (1, 5): [3],   (1, 6): [3,5],
-            (1, 7): [0,8], (1, 8): [0], (1, 9): [0],
-            (2, 3): [], (2, 4): [3], (2, 5): [3], (2, 6): [3,5], (2, 7): [3,5],
-            (2, 8): [0],   (2, 9): [0],
-            (3, 4): [], (3, 5): [],  (3, 6): [5], (3, 7): [5],   (3, 8): [5],
-            (3, 9): [0],
-            (4, 5): [], (4, 6): [5], (4, 7): [5], (4, 8): [5],   (4, 9): [5,8],
-            (5, 6): [], (5, 7): [],  (5, 8): [],  (5, 9): [8],
-            (6, 7): [], (6, 8): [],  (6, 9): [8],
-            (7, 8): [], (7, 9): [8],
-            (8, 9): []
-        }
+        # edgepoints = [diag4, *edge1, diag1, *edge2, diag2, *edge3, diag3, *edge4]
+        edgepoints = [*edge1, *edge2, *edge3, *edge4]
         if show:
             for pt in edgepoints:
                 self.add_cube(0, [0.01, 0.01, 0.01],
                               (0.8, 0, 0, 1),
                               [*pt, self.workspace_height],
                               (0, 0, 0, 1))
-        return edgepoints, mapping
+        return edgepoints, None
 
 class EnvironmentNoRotationsWithHeightmap(Environment):
     """Environment that disables any rotations and always passes [0, 0, 0, 1]."""

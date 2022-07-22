@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import meshcat
 import meshcat.geometry as g
 import meshcat.transformations as mtf
+from airobot.utils.common import to_rot_mat, rot2quat
 
 import PIL
 import yaml
@@ -21,26 +22,40 @@ import os
 import torch
 
 
+def get_transformation_matrix(pose):
+    pos, ori = pose
+    X = np.eye(4)
+    X[:3,:3] = np.array(p.getMatrixFromQuaternion(ori)).reshape((3,3))
+    X[:3, 3]= pos[:]
+    return X
+
+def get_pose_from_transformation(X):
+    matrix = X[:3, :3]
+    pos = X[:3, 3]
+    quat = rot2quat(X[:3,:3])
+    return pos, quat
 # -----------------------------------------------------------------------------
 # HEIGHTMAP UTILS
 # -----------------------------------------------------------------------------
 
 def get_heightmap(points, colors, bounds, pixel_size):
     """Get top-down (z-axis) orthographic heightmap image from 3D pointcloud.
-  
+
     Args:
       points: HxWx3 float array of 3D points in world coordinates.
       colors: HxWx3 uint8 array of values in range 0-255 aligned with points.
       bounds: 3x2 float array of values (rows: X,Y,Z; columns: min,max) defining
         region in 3D space to generate heightmap in world coordinates.
       pixel_size: float defining size of each pixel in meters.
-  
+
     Returns:
       heightmap: HxW float array of height (from lower z-bound) in meters.
       colormap: HxWx3 uint8 array of backprojected color aligned with heightmap.
     """
     width = int(np.round((bounds[0, 1] - bounds[0, 0]) / pixel_size))
     height = int(np.round((bounds[1, 1] - bounds[1, 0]) / pixel_size))
+
+    # print(f'Inside get_heightmap: {bounds}, {width, height}')
     heightmap = np.zeros((height, width), dtype=np.float32)
     colormap = np.zeros((height, width, colors.shape[-1]), dtype=np.uint8)
 
@@ -68,11 +83,11 @@ def get_heightmap(points, colors, bounds, pixel_size):
 
 def get_pointcloud(depth, intrinsics):
     """Get 3D pointcloud from perspective depth image.
-  
+
     Args:
       depth: HxW float array of perspective depth in meters.
       intrinsics: 3x3 float array of camera intrinsics matrix.
-  
+
     Returns:
       points: HxWx3 float array of 3D points in camera coordinates.
     """
@@ -88,11 +103,11 @@ def get_pointcloud(depth, intrinsics):
 
 def transform_pointcloud(points, transform):
     """Apply rigid transformation to 3D pointcloud.
-  
+
     Args:
       points: HxWx3 float array of 3D points in camera coordinates.
       transform: 4x4 float array representing a rigid transformation matrix.
-  
+
     Returns:
       points: HxWx3 float array of transformed 3D points.
     """
@@ -108,6 +123,7 @@ def reconstruct_heightmaps(color, depth, configs, bounds, pixel_size):
     """Reconstruct top-down heightmap views from multiple 3D pointclouds."""
     heightmaps, colormaps = [], []
     for color, depth, config in zip(color, depth, configs):
+        # print(f'inside reconstruct heightmap: {color.shape, depth.shape}')
         intrinsics = np.array(config['intrinsics']).reshape(3, 3)
         xyz = get_pointcloud(depth, intrinsics)
         position = np.array(config['position']).reshape(3, 1)
@@ -145,7 +161,7 @@ def unproject_vectorized(uv_coordinates, depth_values,
                          intrinsic,
                          distortion):
     """Vectorized version of unproject(), for N points.
-  
+
     Args:
       uv_coordinates: pixel coordinates to unproject of shape (n, 2).
       depth_values: depth values corresponding index-wise to the uv_coordinates of
@@ -153,7 +169,7 @@ def unproject_vectorized(uv_coordinates, depth_values,
       intrinsic: array of shape (3, 3). This is typically the return value of
         intrinsics_to_matrix.
       distortion: camera distortion parameters of shape (5,).
-  
+
     Returns:
       xyz coordinates in camera frame of shape (n, 3).
     """
@@ -175,14 +191,14 @@ def unproject_depth_vectorized(im_depth, depth_dist,
                                camera_mtx,
                                camera_dist):
     """Unproject depth image into 3D point cloud, using calibration.
-  
+
     Args:
       im_depth: raw depth image, pre-calibration of shape (height, width).
       depth_dist: depth distortion parameters of shape (8,)
       camera_mtx: intrinsics matrix of shape (3, 3). This is typically the return
         value of intrinsics_to_matrix.
       camera_dist: camera distortion parameters shape (5,).
-  
+
     Returns:
       numpy array of shape [3, H*W]. each column is xyz coordinates
     """
@@ -240,13 +256,13 @@ def apply(pose, position):
 
 def eulerXYZ_to_quatXYZW(rotation):  # pylint: disable=invalid-name
     """Abstraction for converting from a 3-parameter rotation to quaterion.
-  
+
     This will help us easily switch which rotation parameterization we use.
     Quaternion should be in xyzw order for pybullet.
-  
+
     Args:
       rotation: a 3-parameter rotation, in xyz order tuple of 3 floats
-  
+
     Returns:
       quaternion, in xyzw order, tuple of 4 floats
     """
@@ -259,13 +275,13 @@ def eulerXYZ_to_quatXYZW(rotation):  # pylint: disable=invalid-name
 
 def quatXYZW_to_eulerXYZ(quaternion_xyzw):  # pylint: disable=invalid-name
     """Abstraction for converting from quaternion to a 3-parameter toation.
-  
+
     This will help us easily switch which rotation parameterization we use.
     Quaternion should be in xyzw order for pybullet.
-  
+
     Args:
       quaternion_xyzw: in xyzw order, tuple of 4 floats
-  
+
     Returns:
       rotation: a 3-parameter rotation, in xyz order, tuple of 3 floats
     """
@@ -278,13 +294,13 @@ def quatXYZW_to_eulerXYZ(quaternion_xyzw):  # pylint: disable=invalid-name
 
 def apply_transform(transform_to_from, points_from):
     r"""Transforms points (3D) into new frame.
-  
+
     Using transform_to_from notation.
-  
+
     Args:
       transform_to_from: numpy.ndarray of shape [B,4,4], SE3
       points_from: numpy.ndarray of shape [B,3,N]
-  
+
     Returns:
       points_to: numpy.ndarray of shape [B,3,N]
     """
@@ -697,7 +713,7 @@ def create_visualizer(clear=True):
 
 def make_frame(vis, name, h, radius, o=1.0):
     """Add a red-green-blue triad to the Meschat visualizer.
-  
+
     Args:
       vis (MeshCat Visualizer): the visualizer
       name (string): name for this frame (should be unique)

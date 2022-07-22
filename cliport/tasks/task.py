@@ -107,7 +107,7 @@ class Task():
                 else:
                     nn_dists.append(0)
                     nn_targets.append(-1)
-            order = np.argsort(nn_dists)[::-1]
+            order = np.argsort(nn_dists)#[::-1]
 
             # Filter out matched objects.
             order = [i for i in order if nn_dists[i] > 0]
@@ -162,7 +162,8 @@ class Task():
 
             place_pose = (np.asarray(place_pose[0]), np.asarray(place_pose[1]))
 
-            return {'pose0': pick_pose, 'pose1': place_pose}
+            center = env.pb_client.getBasePositionAndOrientation(env.workspace)[0]
+            return {'pose0': pick_pose, 'pose1': place_pose, 'center': center}
 
         return OracleAgent(act)
 

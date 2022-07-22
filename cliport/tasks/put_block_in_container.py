@@ -19,7 +19,7 @@ class PutBlockInContainerUnseenColors(Task):
         self.lang_template = "put the {pick} blocks in brown box"
         self.task_completed_desc = "done placing blocks in box."
 
-    def reset(self, env, n_blocks = 1, fixed = True):
+    def reset(self, env, n_blocks = 3, fixed = True):
         super().reset(env)
         if n_blocks is None:
             n_blocks = np.random.randint(1, 5)
@@ -74,8 +74,8 @@ class PutBlockInContainerUnseenColors(Task):
         self.max_steps = len(blocks) + 1
 
     def generate_random_poses(self, env, box_pose, box_dims, obj_dim, num_objs = 1):
-        coeffs_x = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.3 * box_dims[0]
-        coeffs_y = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.3 * box_dims[1]
+        coeffs_x = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.25 * box_dims[0]
+        coeffs_y = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.25 * box_dims[1]
         obj_poses = []
         for i in range(num_objs):
 
