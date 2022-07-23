@@ -3,7 +3,7 @@ import os
 import string
 import random
 import colorsys
-import pybullet as p
+# import pybullet as p
 
 def ang_in_mpi_ppi(angle):
     """

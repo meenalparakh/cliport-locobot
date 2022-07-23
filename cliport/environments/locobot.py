@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
-import pybullet as p
+# import pybullet as p
 from airobot.utils.common import to_quat
 from airobot.utils.common import to_rot_mat, rot2quat
 from scipy.spatial.transform import Rotation as R

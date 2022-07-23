@@ -29,10 +29,10 @@ def main(cfg):
     dataset_type = cfg['dataset']['type']
 
     train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg,
-                            store=False, cam_idx=[3], n_demos=n_demos, augment=False)
+                            store=False, cam_idx=[0,1], n_demos=n_demos, augment=False)
 
-    data = train_ds.load(0)
-    episode, _  = data
+# data = train_ds.load(0)
+    episode, _  = train_ds.load(train_ds.episode_paths[-1][:-10])
 
     print(f'Episode length: {len(episode)}')
     for step in range(len(episode)):
@@ -43,6 +43,7 @@ def main(cfg):
         # print(datapoint)
         # print(len(datapoint['img']))
         # print(datapoint['p0'])
+        print('Number of substeps:', len(datapoint['img']))
         for substep in range(len(datapoint['img'])):
             plt.imsave(f'/Users/meenalp/Desktop/step_{step}_{substep}.jpeg', obs[substep]['image']['color'][0])
             # plt.imsave(f'/Users/meenalp/Desktop/step_{step}_depth_{i}.jpeg',
@@ -61,18 +62,19 @@ def main(cfg):
             if datapoint['p0'] is None:
                 break
             p0, p1 = datapoint['p0'][substep], datapoint['p1'][substep]
-            d0 = max(0, p0[1] - 20), max(0, p0[0] - 20)
-            d0_ = min(width, p0[1] + 20), min(height, p0[0] + 20)
-            d1 = max(0, p1[1] - 20), max(0, p1[0] - 20)
-            d1_ = min(width, p1[1] + 20), min(height, p1[0] + 20)
+            print('PICK AND PLACE POINTS', p0, p1)
+            d0 = max(0, p0[1] - 10), max(0, p0[0] - 10)
+            d0_ = min(width, p0[1] + 10), min(height, p0[0] + 10)
+            d1 = max(0, p1[1] - 10), max(0, p1[0] - 10)
+            d1_ = min(width, p1[1] + 10), min(height, p1[0] + 10)
 
             # # print(color.shape)
             # print('p0, p1', p0, p1)
             # print('width, height', width, height)
             # print('d0', np.array(d0) - d0_)
             # print('d1', np.array(d1) - d1_)
-            cv2.rectangle(color, d0, d0_, (0, 0, 255), 5)
-            cv2.rectangle(color, d1, d1_, (0, 255, 0), 5)
+            cv2.rectangle(color, d0, d0_, (0, 0, 255), 2)
+            cv2.rectangle(color, d1, d1_, (0, 255, 0), 2)
 
             # print(depth)
             cv2.imwrite(f'/Users/meenalp/Desktop/labelled_img_step_{step}_{substep}.png', color)

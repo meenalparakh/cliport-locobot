@@ -16,7 +16,8 @@ locobot: True #
 mode: train # 'train' or 'val' or 'test'
 n: 1000 # number of demos to generate
 run_id: 0
-trajs_per_process: 30 #
+trajs_per_process: 1 #
+multiprocessing: True
 save_data: True  # write episodes to disk
 
 dataset:

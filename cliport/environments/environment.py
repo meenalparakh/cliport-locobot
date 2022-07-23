@@ -12,7 +12,7 @@ from cliport.tasks import cameras
 from cliport.utils import pybullet_utils
 from cliport.utils import utils
 
-import pybullet as p
+# import pybullet as p
 
 from airobot.sensor.camera.rgbdcam_pybullet import RGBDCameraPybullet
 from airobot.utils.pb_util import create_pybullet_client
@@ -33,7 +33,7 @@ WORKSPACE_URDF_PATH = 'table/table.urdf'
 PLANE_URDF_PATH = 'plane/plane.urdf'
 LOCOBOT_URDF = 'locobot_description/locobot.urdf'
 CUBE_URDF = 'assets/cube/cube.urdf'
-
+FP_CAM_IDX = 1
 ## TODO
 ## (1) fix the image size from camera - currently resizing
 ##     instead of setting camera config
@@ -46,8 +46,7 @@ class Environment(gym.Env):
     def __init__(self,
                  assets_root,
                  task=None,
-                 opengl_render = True,
-                 gui=True,
+                 opengl_render=True,
                  realtime=False,
                  disp=False,
                  shared_memory=False,
@@ -74,7 +73,7 @@ class Environment(gym.Env):
         # self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
         self.workspace_height = 0.165
 
-        self.agent_cams = cameras.RealSenseD415.CONFIG
+        self.agent_cams = cameras.RealSenseD415.CONFIG[1:2]
         # repeat the last comfig until we add a locobot.
         self.agent_cams.append(self.agent_cams[-1])
         self.record_cfg = record_cfg
@@ -113,7 +112,7 @@ class Environment(gym.Env):
                      gym.spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)))
         })
 
-        self.pb_client = create_pybullet_client(gui=gui,
+        self.pb_client = create_pybullet_client(gui=disp,
                                                 realtime=realtime,
                                                 opengl_render=opengl_render)
 
@@ -140,7 +139,7 @@ class Environment(gym.Env):
     @property
     def is_static(self):
         """Return true if objects are no longer moving."""
-        v = [np.linalg.norm(p.getBaseVelocity(i)[0])
+        v = [np.linalg.norm(self.pb_client.getBaseVelocity(i)[0])
              for i in self.obj_ids['rigid']]
         return all(np.array(v) < 5e-3)
 
@@ -190,11 +189,11 @@ class Environment(gym.Env):
                              'the task arg in the environment constructor.')
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
 
-        self.pb_client.resetSimulation(p.RESET_USE_DEFORMABLE_WORLD)
+        self.pb_client.resetSimulation(self.pb_client.RESET_USE_DEFORMABLE_WORLD)
         self.pb_client.setGravity(0, 0, -9.8)
 
         # Temporarily disable rendering to load scene faster.
-        self.pb_client.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+        self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_RENDERING, 0)
 
         pybullet_utils.load_urdf(self.pb_client,
                                  os.path.join(self.assets_root,
@@ -243,7 +242,7 @@ class Environment(gym.Env):
             timeout, substep_obs = self.task.primitive(self, action)
             for substep in range(len(substep_obs)):
                 print('Inside step: substep', substep,
-                        substep_obs[substep]['configs'][3]['position'])
+                        substep_obs[substep]['configs'][FP_CAM_IDX]['position'])
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
@@ -333,8 +332,8 @@ class Environment(gym.Env):
             viewMatrix=viewm,
             projectionMatrix=projm,
             shadow=shadow,
-            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
-            renderer=p.ER_BULLET_HARDWARE_OPENGL)
+            flags=self.pb_client.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+            renderer=self.pb_client.ER_BULLET_HARDWARE_OPENGL)
 
         # Get color image.
         color_image_size = (image_size[0], image_size[1], 4)

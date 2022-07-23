@@ -76,8 +76,8 @@ class LocobotPickPlace():
             env.turn_to_point(center[:2], tol=np.pi/18)
             success = True
             # substep_obs = [obs1, obs2, obs3]
-            for idx, obs in enumerate(substep_obs):
-                print('Inside primitives:', idx, obs['configs'][3]['position'])
+            # for idx, obs in enumerate(substep_obs):
+            #     print('Inside primitives:', idx, obs['configs'][3]['position'])
 
         # Move to prepick pose if pick is not successful.
         else:

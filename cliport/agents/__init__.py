@@ -17,8 +17,13 @@ from cliport.agents.transporter import TwoStreamClipUNetLatTransporterAgent
 from cliport.agents.transporter_lang_goal import TwoStreamClipLingUNetLatTransporterAgent
 from cliport.agents.transporter_lang_goal import TwoStreamClipFilmLingUNetLatTransporterAgent
 
+from cliport.agents.locobot_transporter import LocobotTransporterAgent
 
 names = {
+
+         ################################
+         ### Locobot ###
+         'locobot': LocobotTransporterAgent,
          ################################
          ### CLIPort ###
          'cliport': TwoStreamClipLingUNetLatTransporterAgent,

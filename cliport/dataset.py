@@ -3,6 +3,7 @@
 import os
 import pickle
 import warnings
+import glob
 
 import numpy as np
 from torch.utils.data import Dataset
@@ -24,12 +25,14 @@ import matplotlib.pyplot as plt
 TASK_NAMES = (tasks.names).keys()
 TASK_NAMES = sorted(TASK_NAMES)[::-1]
 FOLDER_PREFIX = 'PROCESS'
+FP_CAM_IDX = 1
+MAX_SUBSTEPS = 10
 
 class RavensDataset(Dataset):
     """A simple image dataset class."""
 
     def __init__(self, path, cfg, store,
-                 cam_idx = [0, 1, 2, 3], n_demos=0, augment=False,
+                 cam_idx = [0, 1], n_demos=0, augment=False,
                  track=False, process_num=0):
         """A simple RGB-D image dataset."""
         self._path = path
@@ -47,28 +50,21 @@ class RavensDataset(Dataset):
 
         self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60
         # legacy code issue: theta_sigma was newly added
-        self.pix_size = 0.003125
+        # self.pix_size = 0.003125
+        self.pix_size = 0.00625
         self.cam_idx = cam_idx
+        self.fp_cam_idx = FP_CAM_IDX
         if not store:
             self.img_frame = self.cfg['dataset']['img_frame']
             if self.img_frame == 'fp':
-                self.cam_idx = [3]
+                self.cam_idx = [self.fp_cam_idx]
         # self.pix_size = 0.002
         self.depth_scale = 1000.0
         # self.in_shape = (320, 160, 6)
-        self.in_shape = (320, 192, 6)
+        # self.in_shape = (320, 192, 6)
+        self.in_shape = (160, 96, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
         self.bounds = np.array([[0.2, 0.8], [-0.5, 0.5], [0.10, 0.28]])
-
-        # Track existing dataset if it exists.
-        # if track:
-        #     color_path = os.path.join(self._path, 'action')
-        #     if os.path.exists(color_path):
-        #         for fname in sorted(os.listdir(color_path)):
-        #             if '.pkl' in fname:
-        #                 seed = int(fname[(fname.find('-') + 1):-4])
-        #                 self.n_episodes += 1
-        #                 self.max_seed = max(self.max_seed, seed)
 
         self._cache = {}
 
@@ -88,16 +84,30 @@ class RavensDataset(Dataset):
                 "but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
 
             episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
-            self.set(episode_paths, episodes)
+            ###
+            num_steps = self.get_steps_count(episode_paths)
+            self.set(episode_paths, episodes, num_steps)
+            ###
 
     def get_epsiode_paths(self):
-        # for fname in sorted(os.listdir(self._path)):
-        #     if FOLDER_PREFIX in fname:
-        #         def get_data_files(dirname):
         return glob.glob(self._path + "/" + FOLDER_PREFIX + "*/episode*/action.pkl")
-                # seed = int(fname[(fname.find('-') + 1):-4])
-                # episode_path =  f'{self.n_episodes:03d}-{seed}'
-                # break
+
+    def get_steps_count(self, episode_paths):
+        steps = []
+        for epi_path in episode_paths:
+            n = len(pickle.load(open(os.path.join(epi_path, 'action'), 'rb')))
+            steps.append(n)
+        return steps
+
+    def set(self, episode_paths, episodes, num_steps):
+        """Limit random samples to specific fixed set."""
+        self.episode_paths = episode_paths
+        self.episode_num_steps = num_steps
+        self.sample_set = episodes
+        self.idx_to_episode_step = []
+        for episode_id in range(len(self.episode_paths)):
+            for step in range(self.episode_num_steps[episode_id]-1):
+                self.idx_to_episode_step.append((episode_id, step))
 
     def add(self, seed, episode):
         """Add an episode to the dataset.
@@ -119,12 +129,12 @@ class RavensDataset(Dataset):
             reward.append(r)
 
             # pdb.set_trace()
-            for substep in range(len(obs)):
-                print("saving substep", substep, ":", obs[substep]['configs'][3]['position'])
+            # for substep in range(len(obs)):
+            #     print("saving substep", substep, ":", obs[substep]['configs'][3]['position'])
 
         def dump(data, field):
-            
-            field_fname = f'{field}.pkl'  
+
+            field_fname = f'{field}.pkl'
             field_path = os.path.join(episode_path, field_fname)
             with open(field_path, 'wb') as f:
                 pickle.dump(data, f)
@@ -181,27 +191,22 @@ class RavensDataset(Dataset):
         self.n_episodes += 1
         self.max_seed = max(self.max_seed, seed)
 
-    def set(self, episode_paths, episodes):
-        """Limit random samples to specific fixed set."""
-        self.episode_paths = episode_paths
-        self.sample_set = episodes
-
     def load(self, episode_path, images=True, cache=False):
 
         def load_image_field(episode_path, side_obs):
-            
+
             num_steps = len(side_obs)
             num_cameras = len(side_obs[0]['configs'][0])
             print(f'No of steps: {num_steps}')
             print(f'No of cameras: {num_cameras}')
 
-            color_dir = os.path.join(self._path, 'color', self.folder_prefix, fname[:-4])
-            depth_dir = os.path.join(self._path, 'depth', self.folder_prefix, fname[:-4])
+            color_dir = os.path.join(episode_path, 'color')
+            depth_dir = os.path.join(episode_path, 'depth')
 
             obs = []
             for step in range(num_steps):
                 substeps = []
-                for substep in range(5):
+                for substep in range(MAX_SUBSTEPS):
                     substep_obs = {}
                     f_check = f'S{step}-U{substep}-C0.png'
                     exists = os.path.exists(os.path.join(color_dir, f_check))
@@ -242,8 +247,8 @@ class RavensDataset(Dataset):
 
             # path = os.path.join(self._path, self.folder_prefix, field)
             if field == 'image':
-                side_obs = pickle.load(open(os.path.join(episode_path, 
-                                       'side_obs'), 'rb'))
+                side_obs = pickle.load(open(os.path.join(episode_path,
+                                       'side_obs.pkl'), 'rb'))
                 data = load_image_field(episode_path, side_obs)
             else:
                 fname = f'{field}.pkl'
@@ -265,9 +270,9 @@ class RavensDataset(Dataset):
         #         break
 
         action = load_field(episode_path, 'action')
-        action = load_field(episode_path, 'reward')
-        action = load_field(episode_path, 'info')
-        action = load_field(episode_path, 'image')
+        reward = load_field(episode_path, 'reward')
+        info = load_field(episode_path, 'info')
+        obs = load_field(episode_path, 'image')
 
         episode = []
         for i in range(len(action)):
@@ -311,7 +316,7 @@ class RavensDataset(Dataset):
                 config = obs[substep]['configs'][idx]
                 pos, ori = config['position'], config['rotation']
                 print(f'Substep: {substep}, Camera {idx}: position: {pos}, rotation: {ori}')
-                if (idx == 3) and (self.img_frame == 'fp'):
+                if (idx == self.fp_cam_idx) and (self.img_frame == 'fp'):
                     bot_pose = obs[substep]['bot_pose']
                     X_WL = utils.get_transformation_matrix(bot_pose)
                     X_WC = utils.get_transformation_matrix((config['position'],
@@ -404,7 +409,8 @@ class RavensDataset(Dataset):
         else:
             sample['lang_goal'] = "task completed."
 
-        return sample
+        # return sample
+        return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturn_params
 
     def process_goal(self, goal, perturb_params):
         # Get goal sample.
@@ -418,7 +424,7 @@ class RavensDataset(Dataset):
             'img': img,
             'p0': p0, 'p0_theta': p0_theta,
             'p1': p1, 'p1_theta': p1_theta,
-            'center': center,
+            # 'center': center,
             'perturb_params': perturb_params
         }
 
@@ -431,27 +437,35 @@ class RavensDataset(Dataset):
         else:
             sample['lang_goal'] = "task completed."
 
-        return sample
+        # return sample
+        return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturn_params
 
     def __len__(self):
-        return len(self.sample_set)
+        return len(self.idx_to_episode_step)
 
     def __getitem__(self, idx):
         # Choose random episode.
-        if len(self.sample_set) > 0:
-            episode_id = np.random.choice(self.sample_set)
-        else:
-            episode_id = np.random.choice(range(self.n_episodes))
-        episode_path = self.episode_paths[episode_id]
-        episode, _ = self.load(episode_path, self.images, self.cache)
+        # if len(self.sample_set) > 0:
+        #     episode_id = np.random.choice(self.sample_set)
+        # else:
+        #     episode_id = np.random.choice(range(self.n_episodes))
+        # episode_id = self.episode_paths[idx]
+        # episode_path = self.episode_paths[episode_id][:-10]
+
+        episode_id, step_id = self.idx_to_episode_step[idx]
+        episode_path = self.episode_paths[episode_id][:-10]
+        print('Episode path:', episode_path)
 
         # Is the task sequential like stack-block-pyramid-seq?
         is_sequential_task = '-seq' in self._path.split("/")[-1]
 
         # Return random observation action pair (and goal) from episode.
-        i = np.random.choice(range(len(episode)-1))
-        g = i+1 if is_sequential_task else -1
-        sample, goal = episode[i], episode[g]
+        step_i = step_id
+        step_g = step_i+1 if is_sequential_task else -1
+
+        (sample, goal), _ = self.load(episode_path, self.images, self.cache, step_i, step_g)
+
+        # sample, goal = episode[i], episode[g]
 
         # Process sample.
         sample = self.process_sample(sample, augment=self.augment)

@@ -6,7 +6,7 @@ from cliport.tasks.task import Task
 from cliport.utils import utils
 
 import random
-import pybullet as p
+# import pybullet as p
 
 
 class PutBlockInContainerUnseenColors(Task):
@@ -19,7 +19,7 @@ class PutBlockInContainerUnseenColors(Task):
         self.lang_template = "put the {pick} blocks in brown box"
         self.task_completed_desc = "done placing blocks in box."
 
-    def reset(self, env, n_blocks = 3, fixed = True):
+    def reset(self, env, n_blocks = 1, fixed = True):
         super().reset(env)
         if n_blocks is None:
             n_blocks = np.random.randint(1, 5)

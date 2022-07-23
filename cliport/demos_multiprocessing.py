@@ -9,7 +9,10 @@ from cliport import tasks
 from cliport.dataset import RavensDataset, FOLDER_PREFIX
 from cliport.environments.environment import Environment
 import pdb
-
+import glob
+from cliport.utils.multiprocessing_utils import UptownFunc
+from copy import copy
+import pickle
 
 def collect_data(cfg):
 
@@ -29,7 +32,8 @@ def collect_data(cfg):
     # Initialize scripted oracle agent and dataset.
     agent = task.oracle(env, locobot=cfg['locobot'])
 
-    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False, 
+    data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], cfg['mode']))
+    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False,
                             process_num=run_id)
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
@@ -48,7 +52,7 @@ def collect_data(cfg):
 
     # Collect training data from oracle demonstrations.
     num_trials = 0
-    while self.n_episodes < cfg['n']:
+    while dataset.n_episodes < cfg['n']:
         episode, total_reward = [], 0
         seed += 2
 
@@ -57,7 +61,7 @@ def collect_data(cfg):
         np.random.seed(seed)
         random.seed(seed)
 
-        print('Oracle demo: {}/{} | Seed: {}'.format(self.n_episodes + 1, cfg['n'], seed))
+        print('Oracle demo: {}/{} | Seed: {}'.format(dataset.n_episodes + 1, cfg['n'], seed))
 
         env.set_task(task)
         obs = env.reset()
@@ -70,7 +74,7 @@ def collect_data(cfg):
 
         # Start video recording (NOTE: super slow)
         if record:
-            env.start_rec(f'{self.n_episodes+1:06d}')
+            env.start_rec(f'{dataset.n_episodes+1:06d}')
 
         # Rollout expert policy
         for _ in range(task.max_steps):
@@ -79,8 +83,8 @@ def collect_data(cfg):
             act = agent.act(obs, info)
             lang_goal = info['lang_goal']
             _obs, _reward, _done, _info = env.step(act)
-            for substep in range(len(_obs)):
-                print('Data collection:', _obs[substep]['configs'][3]['position'])
+            # for substep in range(len(_obs)):
+            #     print('Data collection:', _obs[substep]['configs'][1]['position'])
             # if isinstance(_obs, list):
             episode.append(([*obs, *(_obs[:-env.num_turns])],
                             act,
@@ -111,6 +115,9 @@ def collect_data(cfg):
 
         num_trials += 1
 
+    with open(os.path.join(data_path, 'info'+str(run_id).zfill(5)+'.pkl'), 'wb') as f:
+        pickle.dump([cfg['n'], num_trials], f)
+
     return num_trials
 
 
@@ -118,79 +125,76 @@ def collect_data(cfg):
 def main(cfg):
     # Initialize environment and task.
     print('################################################################################')
-
-    num_trajs_per_process = cfg['trajs_per_process']
-    num_processes = cfg['n']//num_trajs_per_process
-    num_processes_list = [num_trajs_per_process]*num_processes
-    remaining = cfg['n'] - (num_processes * num_trajs_per_process)
-    if remaining > 0:
-        num_processes_list.append(remaining)
-
-
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], cfg['mode']))
-    # action_path = os.path.join(data_path, 'action')
+    print('Multiprocessing enabled:', cfg['multiprocessing'])
 
     run = 0
-    if os.path.exists(action_path):
-        sorted_dirs = sorted(os.listdir(data_path))
+    if os.path.exists(data_path):
+        sorted_dirs = os.listdir(data_path)
         process_lst = []
         for fname in sorted_dirs:
-            start = fname.find(FOLDER_PREFIX) + len(FOLDER_PREFIX)
-            process_lst.append(int(fname[start:]))
+            if FOLDER_PREFIX in fname:
+                # print(f'fname: {fname}')
+                start = fname.find(FOLDER_PREFIX) + len(FOLDER_PREFIX)
+                process_lst.append(int(fname[start:]))
         if not (process_lst == []):
             run = 1 + max(process_lst)
 
-    arguments = []
+    if not cfg['multiprocessing']:
+        cfg['run_id'] = run
+        num_trajs_tried = collect_data(cfg)
 
-    for i in range(len(num_processes_list)):
-        cfg_ = copy(cfg)
-        cfg_['run_id'] = run + i
-        cfg_['n'] = num_processes_list[i]
-        # cfg_.file_prefix = args.dir + f'/P{str(i + run).zfill(5)}'
-        # os.makedirs(args_.file_prefix)
-        arguments.append(cfg_)
+    else:
+        cfg['disp'] = False
+        num_trajs_per_process = cfg['trajs_per_process']
+        num_processes = cfg['n']//num_trajs_per_process
+        num_processes_list = [num_trajs_per_process]*num_processes
+        remaining = cfg['n'] - (num_processes * num_trajs_per_process)
+        if remaining > 0:
+            num_processes_list.append(remaining)
 
-    P = UptownFunc()
-    results = P.parallelise_function(arguments, collect_data)
+        arguments = []
+        for i in range(len(num_processes_list)):
+            cfg_ = copy(cfg)
+            cfg_['run_id'] = run + i
+            cfg_['n'] = num_processes_list[i]
+            arguments.append(cfg_)
 
-    num_trajs_tried = 0
-    total_steps = 0
+        P = UptownFunc()
+        P.parallelise_function(arguments, collect_data)
+        # num_trajs_tried = 0
+        # for result in results:
+        #     num_trajs_tried_ = result
+        #     num_trajs_tried += num_trajs_tried_
 
-    for result in results:
-        num_trajs_tried_ = result
-        num_trajs_tried += num_trajs_tried_
+    num_success, num_tried = 0, 0
+    for fname in os.listdir(data_path):
+        if 'info' in fname:
+            n1, n2 = pickle.load(open(os.path.join(data_path, fname), 'rb'))
+            num_success += n1
+            num_tried += n2
 
-    print(f'Total trajectories tried: {num_trajs_tried}')
-    print('Successful trajectories:', cfg['n'])
-    print('Success rate (approx):', cfg['n']/num_trajs_tried)
+    print(f'Total successful episodes: {num_success}')
+    print(f'Total episodes tried: {num_tried}')
+    print(f'Success rate (upper bound): {num_success/num_tried}')
+
+        # if args.remove_old:
+    for fname in os.listdir(data_path):
+        if 'info' in fname:
+            # print(fname)
+            os.remove(os.path.join(data_path, fname))
+    with open(os.path.join(data_path, 'info_.pkl'), 'wb') as f:
+        pickle.dump([num_success, num_tried], f)
+
+    ## check if directory exists, if not create one
+
+
+
+    # print(f'Total trajectories tried: {num_trajs_tried}')
+    # print('Successful trajectories:', cfg['n'])
+    # print('Success rate (approx):', cfg['n']/num_trajs_tried)
 
 
 if __name__ == '__main__':
 
-    run = 0
-    lst = [int(d[-5:]) for d in glob.glob(args.dir + '/*')]
-    if not (lst == []):
-        run = 1 + max(lst)
-
-    print(f'Run: {run}')
-
-    for i in range(len(num_processes_list)):
-        args_ = copy(args)
-        args_.num_trajs = num_processes_list[i]
-        args_.file_prefix = args.dir + f'/P{str(i + run).zfill(5)}'
-        os.makedirs(args_.file_prefix)
-        arguments.append(args_)
-
-    P = UptownFunc()
-    results = P.parallelise_function(arguments, collect_traj)
-
-    num_trajs_tried = 0
-    total_steps = 0
-
-    for result in results:
-        num_trajs_tried_, num_steps, _, _ = result
-        num_trajs_tried += num_trajs_tried_
-        total_steps += num_steps
-
-    print(f'Total trajectories tried: {num_trajs_tried}')
-    print(f'Total steps (datapoints): {total_steps}')
+    main()

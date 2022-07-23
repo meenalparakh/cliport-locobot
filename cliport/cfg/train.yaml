@@ -11,7 +11,7 @@ dataset:
   type: 'single' # 'single' or 'multi'
   images: True
   cache: True # load episodes to memory instead of reading from disk
-  img_frame: 'fp' # 'world' or 'fp' 
+  img_frame: 'fp' # 'world' or 'fp'
   augment:
     theta_sigma: 60 # rotation sigma in degrees; N(mu = 0, sigma = theta_sigma).
 
@@ -23,7 +23,8 @@ train:
 
   # task configs
   task: packing-boxes-pairs-seen-colors
-  agent: two_stream_full_clip_lingunet_lat_transporter
+  # agent: two_stream_full_clip_lingunet_lat_transporter
+  agent: 'locobot'
   n_demos: 1000
   n_steps: 201000 # use 601000 for multi-task models
 

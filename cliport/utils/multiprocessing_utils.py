@@ -8,7 +8,7 @@ class UptownFunc:
     def __init__(self):
         pass
 
-    def _func_queue(self, func, q_in, q_out, *args, **kwargs):
+    def _func_queue(self, func, q_in, *args, **kwargs):
         """ Retrive processes from the queue """
         while True:
             pos, var = q_in.get()
@@ -16,7 +16,7 @@ class UptownFunc:
                 break
 
             res = func(var, *args, **kwargs)
-            q_out.put((pos, res))
+            # q_out.put((pos, res))
         return
 
     def parallelise_function(self, var, func, *args, **kwargs):
@@ -25,12 +25,12 @@ class UptownFunc:
 
         processes = []
         q_in = Queue(1)
-        q_out = Queue()
+        # q_out = Queue()
 
         nprocs = cpu_count()
 
         for i in range(nprocs):
-            pass_args = [func, q_in, q_out]
+            pass_args = [func, q_in]
             # pass_args.extend(args)
 
             p = Process(target=self._func_queue,\
@@ -48,13 +48,13 @@ class UptownFunc:
         [q_in.put((None, None)) for _ in range(nprocs)]
 
         # get the results
-        results = [[] for i in range(n)]
-        for i in range(len(sent)):
-            index, res = q_out.get()
-            results[index] = res
+        # results = [[] for i in range(n)]
+        # for i in range(len(sent)):
+        #     index, res = q_out.get()
+        #     results[index] = res
 
         # wait until each processor has finished
         [p.join() for p in processes]
-
+        print('Finished!')
         # reorder results
-        return results
+        # return results
