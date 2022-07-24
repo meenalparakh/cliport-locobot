@@ -46,18 +46,11 @@ def main(cfg):
         print('Number of substeps:', len(datapoint['img']))
         for substep in range(len(datapoint['img'])):
             plt.imsave(f'/Users/meenalp/Desktop/step_{step}_{substep}.jpeg', obs[substep]['image']['color'][0])
-            # plt.imsave(f'/Users/meenalp/Desktop/step_{step}_depth_{i}.jpeg',
-            #             obs[substep]['image']['color'][0]/np.max(obs[substep]['image']['color'][0]))
-            # print('Cam config:', info[i]['cam_configs'][3])
-
             color = cv2.cvtColor(datapoint['img'][substep][:,:,:3], cv2.COLOR_RGB2BGR)
             depth = datapoint['img'][substep][:,:,3]
             print('Maximum in depth image', np.max(depth))
             depth = depth/np.max(depth)
 
-            # depth = cv2.cvtColor(depth, cv2.)
-            # kernel = np.ones((2,2),np.uint8)
-            # color = cv2.dilate(color, kernel,iterations = 1)
             height, width = color.shape[:2]
             if datapoint['p0'] is None:
                 break
@@ -68,11 +61,6 @@ def main(cfg):
             d1 = max(0, p1[1] - 10), max(0, p1[0] - 10)
             d1_ = min(width, p1[1] + 10), min(height, p1[0] + 10)
 
-            # # print(color.shape)
-            # print('p0, p1', p0, p1)
-            # print('width, height', width, height)
-            # print('d0', np.array(d0) - d0_)
-            # print('d1', np.array(d1) - d1_)
             cv2.rectangle(color, d0, d0_, (0, 0, 255), 2)
             cv2.rectangle(color, d1, d1_, (0, 255, 0), 2)
 

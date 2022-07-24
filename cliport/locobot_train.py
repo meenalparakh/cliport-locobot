@@ -6,7 +6,8 @@ from pathlib import Path
 import torch
 from cliport import agents
 from cliport.dataset import RavensDataset, RavensMultiTaskDataset
-
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 import hydra
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -66,11 +67,36 @@ def main(cfg):
                              store=False, cam_idx=[0,1], n_demos=n_demos, augment=False)
     val_ds = RavensDataset(os.path.join(data_dir, '{}-val'.format(task)), cfg,
                             store=False, cam_idx=[0,1], n_demos=n_val, augment=False)
-    #
-    agent = agents.names[agent_type](name, cfg, train_ds, val_ds)
 
+    # test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=num_cpus, shuffle = False)
+
+    # agent = agents.names[agent_type](name, cfg, train_ds, val_ds)
+
+    print(f'Length of dataset: {len(train_ds)}')
+    print(f'steps description: {train_ds.idx_to_episode_step}')
+    # pdb.set_trace()
+    for i in range(len(train_ds)):
+        # goal[0]
+        sample, goal = train_ds[i]
+        cmap = goal[0][:,:,:3]/255
+        hmap = goal[0][:,:,3]
+        plt.imsave(f'/Users/meenalp/Desktop/image{i}.png', cmap)
+        plt.imsave(f'/Users/meenalp/Desktop/image_depth{i}.png', hmap)
+
+        print("Goal:", goal[0].shape)
+
+    # Dataloader
+    train_loader = DataLoader(train_ds, batch_size=1,
+                                num_workers=cfg['train']['num_cpus'],
+                                shuffle = True)
+    val_loader = DataLoader(val_ds, batch_size=cfg['train']['batch_size'],
+                                num_workers=cfg['train']['num_cpus'],
+                                shuffle = False)
+
+    # for batch in train_loader:
+    #     print(f'Batch shape: {batch.shape}')
     # train_ds[0]
-    trainer.fit(agent)
+    # trainer.fit(agent)
 
 if __name__ == '__main__':
     main()

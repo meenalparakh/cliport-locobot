@@ -95,7 +95,7 @@ class RavensDataset(Dataset):
     def get_steps_count(self, episode_paths):
         steps = []
         for epi_path in episode_paths:
-            n = len(pickle.load(open(os.path.join(epi_path, 'action'), 'rb')))
+            n = len(pickle.load(open(epi_path, 'rb')))
             steps.append(n)
         return steps
 
@@ -127,10 +127,6 @@ class RavensDataset(Dataset):
             info.append(i)
             action.append(act)
             reward.append(r)
-
-            # pdb.set_trace()
-            # for substep in range(len(obs)):
-            #     print("saving substep", substep, ":", obs[substep]['configs'][3]['position'])
 
         def dump(data, field):
 
@@ -167,15 +163,13 @@ class RavensDataset(Dataset):
                     print(f'steps: {step}, substep: {substep}, cameras: {num_cameras}')
 
                     for camera in range(num_cameras):
-                        # print(f'Step: {step}, Substep: {substep}, Camera:{camera}')
                         color = np.array(obs[substep]['image']['color'][camera], dtype=np.uint8)
                         depth = np.array(obs[substep]['image']['depth'][camera], dtype=np.float32)
                         fname = f'S{step}-U{substep}-C{camera}.png'
-                        # if field == 'color':
-                            # image = np.uint8(image)
+
                         color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(os.path.join(color_path, fname), color)
-                        # elif field == 'depth':
+
                         sdepth = depth * self.depth_scale
                         cv2.imwrite(os.path.join(depth_path, fname),
                                     sdepth.astype(np.uint16))
@@ -191,20 +185,103 @@ class RavensDataset(Dataset):
         self.n_episodes += 1
         self.max_seed = max(self.max_seed, seed)
 
-    def load(self, episode_path, images=True, cache=False):
+    # def load(self, episode_path, images=True, cache=False):
+    #
+    #     def load_image_field(episode_path, side_obs):
+    #
+    #         num_steps = len(side_obs)
+    #         num_cameras = len(side_obs[0]['configs'][0])
+    #         print(f'No of steps: {num_steps}')
+    #         print(f'No of cameras: {num_cameras}')
+    #
+    #         color_dir = os.path.join(episode_path, 'color')
+    #         depth_dir = os.path.join(episode_path, 'depth')
+    #
+    #         obs = []
+    #         for step in range(num_steps):
+    #             substeps = []
+    #             for substep in range(MAX_SUBSTEPS):
+    #                 substep_obs = {}
+    #                 f_check = f'S{step}-U{substep}-C0.png'
+    #                 exists = os.path.exists(os.path.join(color_dir, f_check))
+    #                 if not exists:
+    #                     break
+    #                 cams_color = []
+    #                 cams_depth = []
+    #                 for cam in self.cam_idx:
+    #                     f = f'S{step}-U{substep}-C{cam}.png'
+    #                     depth = cv2.imread(os.path.join(depth_dir, f), cv2.IMREAD_UNCHANGED)
+    #                     depth = depth / self.depth_scale
+    #                     color = cv2.imread(os.path.join(color_dir, f))
+    #                     color = cv2.cvtColor(color, cv2.COLOR_BGR2RGB)
+    #
+    #                     cams_color.append(color)
+    #                     cams_depth.append(depth)
+    #
+    #                 substep_obs['image'] = {'color': cams_color, 'depth': cams_depth}
+    #                 substep_obs['configs'] = side_obs[step]['configs'][substep]
+    #                 substep_obs['bot_pose'] = side_obs[step]['bot_pose'][substep]
+    #                 substep_obs['bot_jpos'] = side_obs[step]['bot_jpos'][substep]
+    #                 substep_obs['lang_goal'] = side_obs[step]['lang_goal'][substep]
+    #
+    #                 substeps.append(substep_obs)
+    #             obs.append(substeps)
+    #
+    #         return obs
+    #
+    #     def load_field(episode_path, field):
+    #
+    #         name = episode_path[episode_path.find(FOLDER_PREFIX):]
+    #         if cache:
+    #             if name in self._cache:
+    #                 if field in self._cache[name]:
+    #                     return self._cache[name][field]
+    #             else:
+    #                 self._cache[name] = {}
+    #
+    #         # path = os.path.join(self._path, self.folder_prefix, field)
+    #         if field == 'image':
+    #             side_obs = pickle.load(open(os.path.join(episode_path,
+    #                                    'side_obs.pkl'), 'rb'))
+    #             data = load_image_field(episode_path, side_obs)
+    #         else:
+    #             fname = f'{field}.pkl'
+    #             data = pickle.load(open(os.path.join(episode_path, fname), 'rb'))
+    #         if cache:
+    #             self._cache[name][field] = data
+    #         return data
+    #
+    #     # Get filename and random seed used to initialize episode.
+    #     seed = None
+    #
+    #     action = load_field(episode_path, 'action')
+    #     reward = load_field(episode_path, 'reward')
+    #     info = load_field(episode_path, 'info')
+    #     obs = load_field(episode_path, 'image')
+    #
+    #     episode = []
+    #     for i in range(len(action)):
+    #         episode.append((obs[i], action[i], reward[i], info[i]))
+    #     return episode, seed
 
-        def load_image_field(episode_path, side_obs):
+    def load(self, episode_path, step_i, step_g, images=True, cache=False):
 
+        def load_image_field(episode_path, side_obs, step_i, step_g):
+
+            # pdb.set_trace()
             num_steps = len(side_obs)
             num_cameras = len(side_obs[0]['configs'][0])
             print(f'No of steps: {num_steps}')
             print(f'No of cameras: {num_cameras}')
+            step_i = (step_i + num_steps)%num_steps
+            step_g = (step_g + num_steps)%num_steps
 
             color_dir = os.path.join(episode_path, 'color')
             depth_dir = os.path.join(episode_path, 'depth')
 
             obs = []
-            for step in range(num_steps):
+            for step in [step_i, step_g]:
+                # pdb.set_trace()
                 substeps = []
                 for substep in range(MAX_SUBSTEPS):
                     substep_obs = {}
@@ -235,7 +312,7 @@ class RavensDataset(Dataset):
 
             return obs
 
-        def load_field(episode_path, field):
+        def load_field(episode_path, step_i, step_g, field):
 
             name = episode_path[episode_path.find(FOLDER_PREFIX):]
             if cache:
@@ -249,7 +326,7 @@ class RavensDataset(Dataset):
             if field == 'image':
                 side_obs = pickle.load(open(os.path.join(episode_path,
                                        'side_obs.pkl'), 'rb'))
-                data = load_image_field(episode_path, side_obs)
+                data = load_image_field(episode_path, side_obs, step_i, step_g)
             else:
                 fname = f'{field}.pkl'
                 data = pickle.load(open(os.path.join(episode_path, fname), 'rb'))
@@ -260,24 +337,15 @@ class RavensDataset(Dataset):
         # Get filename and random seed used to initialize episode.
         seed = None
 
-        # episode_name = f'episode{self.n_episodes:03d}'
-        # episode_path = os.path.join(self._path, FOLDER_PREFIX + str(process_id).zfill(5))
+        action = load_field(episode_path, step_i, step_g, 'action')
+        reward = load_field(episode_path, step_i, step_g, 'reward')
+        info = load_field(episode_path, step_i, step_g, 'info')
+        obs_1, obs_2 = load_field(episode_path, step_i, step_g, 'image')
 
-        # for fname in sorted(os.listdir(episode_path)):
-        #     if f'episode{episode_id:03d}' in fname:
-        #         seed = int(fname[(fname.find('-') + 1):-4])
-        #         episode_path =  f'episode{self.n_episodes:03d}-{seed}'
-        #         break
+        i = (obs_1, action[step_i], reward[step_i], info[step_i])
+        g = (obs_2, action[step_g], reward[step_g], info[step_g])
 
-        action = load_field(episode_path, 'action')
-        reward = load_field(episode_path, 'reward')
-        info = load_field(episode_path, 'info')
-        obs = load_field(episode_path, 'image')
-
-        episode = []
-        for i in range(len(action)):
-            episode.append((obs[i], action[i], reward[i], info[i]))
-        return episode, seed
+        return (i, g), seed
 
     def get_image(self, obs, cam_config=None):
         """Stack color and height images image."""
@@ -303,19 +371,15 @@ class RavensDataset(Dataset):
     def get_image_wrapper(self, obs):
         """Stack color and height images image."""
         images = []
-        # pdb.set_trace()
-        # print('Info:', info)
         for substep in range(len(obs)):
-            print('Info:', obs[substep]['configs'][0]['position'])
-
+            # print('Info:', obs[substep]['configs'][0]['position'])
             substep_obs = obs[substep]['image']
-            # cam_configs = info[substep]['cam_configs']
 
             cam_configs = []
             for idx in self.cam_idx:
                 config = obs[substep]['configs'][idx]
                 pos, ori = config['position'], config['rotation']
-                print(f'Substep: {substep}, Camera {idx}: position: {pos}, rotation: {ori}')
+                # print(f'Substep: {substep}, Camera {idx}: position: {pos}, rotation: {ori}')
                 if (idx == self.fp_cam_idx) and (self.img_frame == 'fp'):
                     bot_pose = obs[substep]['bot_pose']
                     X_WL = utils.get_transformation_matrix(bot_pose)
@@ -330,9 +394,6 @@ class RavensDataset(Dataset):
             img = self.get_image(substep_obs, cam_configs)
             images.append(img)
 
-        # if len(obs['color']) == 1:
-        #     images = images*NUM_SUBSTEPS
-
         return images
 
     def transform_pick_place(self, act, obs):
@@ -342,7 +403,6 @@ class RavensDataset(Dataset):
         X_W_pick = utils.get_transformation_matrix(pick_pose)
         X_W_place = utils.get_transformation_matrix(place_pose)
 
-        # print(f'inside transform pick place: {pick_pose, place_pose}')
         acts = []
         p0s, p0_thetas, p1s, p1_thetas, centers = [], [], [], [], []
         for i, substep_obs in enumerate(obs):
@@ -410,20 +470,20 @@ class RavensDataset(Dataset):
             sample['lang_goal'] = "task completed."
 
         # return sample
-        return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturn_params
+        return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturb_params
 
     def process_goal(self, goal, perturb_params):
         # Get goal sample.
         (obs, act, _, info) = goal
-        img = self.get_image_wrapper(obs)[0]
+        imgs = self.get_image_wrapper(obs)[0]
 
-        p0, p1 = None, None
-        p0_theta, p1_theta = None, None
+        p0s, p1s = None, None
+        p0_thetas, p1_thetas = None, None
         center = None
         sample = {
-            'img': img,
-            'p0': p0, 'p0_theta': p0_theta,
-            'p1': p1, 'p1_theta': p1_theta,
+            'img': imgs,
+            'p0': p0s, 'p0_theta': p0_thetas,
+            'p1': p1s, 'p1_theta': p1_thetas,
             # 'center': center,
             'perturb_params': perturb_params
         }
@@ -438,20 +498,12 @@ class RavensDataset(Dataset):
             sample['lang_goal'] = "task completed."
 
         # return sample
-        return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturn_params
+        return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturb_params
 
     def __len__(self):
         return len(self.idx_to_episode_step)
 
     def __getitem__(self, idx):
-        # Choose random episode.
-        # if len(self.sample_set) > 0:
-        #     episode_id = np.random.choice(self.sample_set)
-        # else:
-        #     episode_id = np.random.choice(range(self.n_episodes))
-        # episode_id = self.episode_paths[idx]
-        # episode_path = self.episode_paths[episode_id][:-10]
-
         episode_id, step_id = self.idx_to_episode_step[idx]
         episode_path = self.episode_paths[episode_id][:-10]
         print('Episode path:', episode_path)
@@ -463,13 +515,14 @@ class RavensDataset(Dataset):
         step_i = step_id
         step_g = step_i+1 if is_sequential_task else -1
 
-        (sample, goal), _ = self.load(episode_path, self.images, self.cache, step_i, step_g)
+        print(f'Retrieving {step_i, step_g}')
 
-        # sample, goal = episode[i], episode[g]
+        (sample, goal), _ = self.load(episode_path, step_i, step_g,
+                                      self.images, self.cache)
+        print(f'Retrieved {step_i, step_g}')
 
-        # Process sample.
         sample = self.process_sample(sample, augment=self.augment)
-        goal = self.process_goal(goal, perturb_params=sample['perturb_params'])
+        goal = self.process_goal(goal, perturb_params=sample[-1])
 
         return sample, goal
 
