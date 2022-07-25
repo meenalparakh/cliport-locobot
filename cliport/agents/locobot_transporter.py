@@ -73,57 +73,58 @@ class LocobotTransporterAgentPrimary(LightningModule):
     #     else:
     #         raise NotImplementedError()
 
-    def attn_forward(self, inp, softmax=True):
-        inp_img = inp['inp_img']
 
-        output = self.attention.forward(inp_img, softmax=softmax)
-        return output
+    def attn_training_step(self, sample, backprop=True, compute_err=False):
+        imgs, labels, p0_thetas = sample
 
-    def attn_training_step(self, frame, backprop=True, compute_err=False):
-        inp_img = frame['img']
-        p0, p0_theta = frame['p0'], frame['p0_theta']
+        # inp_img = frame['img']
+        # p, theta = frame['p0'], frame['p0_theta']
 
-        inp = {'inp_img': inp_img}
-        out = self.attn_forward(inp, softmax=False)
-        return self.attn_criterion(backprop, compute_err, inp, out, p0, p0_theta)
+        batch_size = imgs[0].shape[0]
+        img_size = self.in_shape[:2]
+        # predictions = []
+        losses = []
+        for i in range(len(imgs)):
+            predictions.append(self.attention.forward(imgs[i], softmax=False))
 
-    def attn_criterion(self, backprop, compute_err, inp, out, p, theta):
-        # Get label.
-        theta_i = theta / (2 * np.pi / self.attention.n_rotations)
-        theta_i = np.int32(np.round(theta_i)) % self.attention.n_rotations
-        inp_img = inp['inp_img']
-        label_size = inp_img.shape[:2] + (self.attention.n_rotations,)
-        label = np.zeros(label_size)
-        label[p[0], p[1], theta_i] = 1
-        label = label.transpose((2, 0, 1))
-        label = label.reshape(1, np.prod(label.shape))
-        label = torch.from_numpy(label).to(dtype=torch.float, device=out.device)
+            # theta_i = p0_thetas[i] / (2 * np.pi / self.attention.n_rotations)
+            # theta_i = np.int32(np.round(theta_i)) % self.attention.n_rotations
 
-        # Get loss.
-        loss = self.cross_entropy_with_logits(out, label)
+            # label_size = (batch_size, self.attention.n_rotations, *img_size) 
+            # label = torch.ones(label_size, dtype=torch.uint8)
+            # label[:, theta_i, :, :] = labels[i]
+            # label = label.reshape((batch_size, -1))
+            # label = torch.from_numpy(label).to(dtype=torch.float, device=out.device)
 
-        # Backpropagate.
-        if backprop:
-            attn_optim = self._optimizers['attn']
-            self.manual_backward(loss, attn_optim)
-            attn_optim.step()
-            attn_optim.zero_grad()
+            # Get loss.
+            loss = self.cross_entropy_with_logits(predictions, labels[i])
+            losses.append(loss)
+
+
+        return (losses[0] + losses[1] + losses[2]), None
+        
+        # # Backpropagate.
+        # if backprop:
+        #     attn_optim = self._optimizers['attn']
+        #     self.manual_backward(loss, attn_optim)
+        #     attn_optim.step()
+        #     attn_optim.zero_grad()
 
         # Pixel and Rotation error (not used anywhere).
-        err = {}
-        if compute_err:
-            pick_conf = self.attn_forward(inp)
-            pick_conf = pick_conf.detach().cpu().numpy()
-            argmax = np.argmax(pick_conf)
-            argmax = np.unravel_index(argmax, shape=pick_conf.shape)
-            p0_pix = argmax[:2]
-            p0_theta = argmax[2] * (2 * np.pi / pick_conf.shape[2])
+        # err = {}
+        # if compute_err:
+        #     pick_conf =  self.attention.forward(inp_img)
+        #     pick_conf = pick_conf.detach().cpu().numpy()
+        #     argmax = np.argmax(pick_conf)
+        #     argmax = np.unravel_index(argmax, shape=pick_conf.shape)
+        #     p0_pix = argmax[:2]
+        #     p0_theta = argmax[2] * (2 * np.pi / pick_conf.shape[2])
 
-            err = {
-                'dist': np.linalg.norm(np.array(p) - p0_pix, ord=1),
-                'theta': np.absolute((theta - p0_theta) % np.pi)
-            }
-        return loss, err
+        #     err = {
+        #         'dist': np.linalg.norm(np.array(p) - p0_pix, ord=1),
+        #         'theta': np.absolute((theta - p0_theta) % np.pi)
+        #     }
+        # return loss, err
 
     def trans_forward(self, inp, softmax=True):
         inp_img = inp['inp_img']
@@ -132,55 +133,59 @@ class LocobotTransporterAgentPrimary(LightningModule):
         output = self.transport.forward(inp_img, p0, softmax=softmax)
         return output
 
-    def transport_training_step(self, frame, backprop=True, compute_err=False):
-        inp_img = frame['img']
-        p0 = frame['p0']
-        p1, p1_theta = frame['p1'], frame['p1_theta']
+    def transport_training_step(self, sample, backprop=True, compute_err=False):
 
-        inp = {'inp_img': inp_img, 'p0': p0}
-        output = self.trans_forward(inp, softmax=False)
-        err, loss = self.transport_criterion(backprop, compute_err, inp, output, p0, p1, p1_theta)
-        return loss, err
+        imgs, labels, (p0_thetas, p1_thetas) = sample
+        # inp_img = frame['img']
+        # p0 = frame['p0']
+        # p1, p1_theta = frame['p1'], frame['p1_theta']
 
-    def transport_criterion(self, backprop, compute_err, inp, output, p, q, theta):
-        itheta = theta / (2 * np.pi / self.transport.n_rotations)
-        itheta = np.int32(np.round(itheta)) % self.transport.n_rotations
+        # inp = {'inp_img': inp_img, 'p0': p0}
 
-        # Get one-hot pixel label map.
-        inp_img = inp['inp_img']
-        label_size = inp_img.shape[:2] + (self.transport.n_rotations,)
-        label = np.zeros(label_size)
-        label[q[0], q[1], itheta] = 1
+        pick_crop = 
 
-        # Get loss.
-        label = label.transpose((2, 0, 1))
-        label = label.reshape(1, np.prod(label.shape))
-        label = torch.from_numpy(label).to(dtype=torch.float, device=output.device)
-        output = output.reshape(1, np.prod(output.shape))
-        loss = self.cross_entropy_with_logits(output, label)
-        if backprop:
-            transport_optim = self._optimizers['trans']
-            self.manual_backward(loss, transport_optim)
-            transport_optim.step()
-            transport_optim.zero_grad()
+        for i in range()
 
-        # Pixel and Rotation error (not used anywhere).
-        err = {}
-        if compute_err:
-            place_conf = self.trans_forward(inp)
-            place_conf = place_conf.permute(1, 2, 0)
-            place_conf = place_conf.detach().cpu().numpy()
-            argmax = np.argmax(place_conf)
-            argmax = np.unravel_index(argmax, shape=place_conf.shape)
-            p1_pix = argmax[:2]
-            p1_theta = argmax[2] * (2 * np.pi / place_conf.shape[2])
+            output = self.transport.forward(inp_img, p0, softmax=False)
+            err, loss = self.transport_criterion(backprop, compute_err, inp, output, p0, p1, p1_theta)
+            itheta = theta / (2 * np.pi / self.transport.n_rotations)
+            itheta = np.int32(np.round(itheta)) % self.transport.n_rotations
 
-            err = {
-                'dist': np.linalg.norm(np.array(q) - p1_pix, ord=1),
-                'theta': np.absolute((theta - p1_theta) % np.pi)
-            }
+            # Get one-hot pixel label map.
+            inp_img = inp['inp_img']
+            label_size = inp_img.shape[:2] + (self.transport.n_rotations,)
+            label = np.zeros(label_size)
+            label[q[0], q[1], itheta] = 1
+
+            # Get loss.
+            label = label.transpose((2, 0, 1))
+            label = label.reshape(1, np.prod(label.shape))
+            label = torch.from_numpy(label).to(dtype=torch.float, device=output.device)
+            output = output.reshape(1, np.prod(output.shape))
+            loss = self.cross_entropy_with_logits(output, label)
+            if backprop:
+                transport_optim = self._optimizers['trans']
+                self.manual_backward(loss, transport_optim)
+                transport_optim.step()
+                transport_optim.zero_grad()
+
+            # Pixel and Rotation error (not used anywhere).
+            err = {}
+            if compute_err:
+                place_conf = self.trans_forward(inp)
+                place_conf = place_conf.permute(1, 2, 0)
+                place_conf = place_conf.detach().cpu().numpy()
+                argmax = np.argmax(place_conf)
+                argmax = np.unravel_index(argmax, shape=place_conf.shape)
+                p1_pix = argmax[:2]
+                p1_theta = argmax[2] * (2 * np.pi / place_conf.shape[2])
+
+                err = {
+                    'dist': np.linalg.norm(np.array(q) - p1_pix, ord=1),
+                    'theta': np.absolute((theta - p1_theta) % np.pi)
+                }
         self.transport.iters += 1
-        return err, loss
+        return loss, err
 
     def training_step(self, batch, batch_idx):
         self.attention.train()
