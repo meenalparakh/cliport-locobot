@@ -205,10 +205,13 @@ class Environment(gym.Env):
                                          [*self.table_center, 0])
 
         self.ws_edgepts = self.get_ws_edgepts(show=False, margin = 0.25)
+
+
+        bot_pos = random.choice(self.ws_edgepts[0])
         self.bot_id = pybullet_utils.load_urdf(self.pb_client,
                                                os.path.join(self.assets_root,
                                                             LOCOBOT_URDF),
-                                               [0, 0, 0.001])
+                                               [*bot_pos, 0.001])
 
         self.locobot = Locobot(self, self.bot_id)
         # import pdb; pdb.set_trace()
@@ -221,6 +224,8 @@ class Environment(gym.Env):
         # self.turn_to_point(self.table_center, tol=np.pi/18)
         # Reset task.
         self.task.reset(self)
+
+
         self.agent_cams[-1] = self.locobot.get_camera_config(bot_frame=False)
         # Re-enable rendering.
         self.pb_client.configureDebugVisualizer(self.pb_client.COV_ENABLE_RENDERING, 1)
@@ -669,7 +674,9 @@ class Environment(gym.Env):
         # success &= _move(pt1_idx, target_idx, target_pos)
         edge_pt = np.array(self.ws_edgepts[0][target_idx])
         dx, dy = np.array(target_pos) - np.array(edge_pt)
-        theta = np.arctan2(dy, dx)
+
+        eps = min(max(tol_angle*np.random.normal(), -tol_angle), tol_angle)
+        theta = np.arctan2(dy, dx) + eps
         ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
         self.pb_client.resetBasePositionAndOrientation(self.bot_id, [*edge_pt, 0.001], ori)
 

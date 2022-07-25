@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-
+import numpy as np
 import torch
 from cliport import agents
 from cliport.dataset import RavensDataset, RavensMultiTaskDataset
@@ -74,24 +74,35 @@ def main(cfg):
 
     print(f'Length of dataset: {len(train_ds)}')
     print(f'steps description: {train_ds.idx_to_episode_step}')
-    # pdb.set_trace()
+    print(f'Numsteps: {train_ds.episode_num_steps}')
+    print(f'episode numstep: {train_ds.episode_paths[5]}')
     for i in range(len(train_ds)):
         # goal[0]
         sample, goal = train_ds[i]
-        cmap = goal[0][:,:,:3]/255
-        hmap = goal[0][:,:,3]
-        plt.imsave(f'/Users/meenalp/Desktop/image{i}.png', cmap)
-        plt.imsave(f'/Users/meenalp/Desktop/image_depth{i}.png', hmap)
+        imgs = sample[0]
+        print("Number of substeps:", len(imgs))
+        for substep in range(len(imgs)):
+            im = imgs[substep].permute(1, 2, 0)
+            cmap = im[:,:,:3].numpy()
+            # print(cmap[80,80,0])
+            hmap = im[:,:,3].numpy()
+            plt.imsave(f'/Users/meenalp/Desktop/image{substep}.png', cmap)
+            plt.imsave(f'/Users/meenalp/Desktop/image_depth{substep}.png', hmap)
 
-        print("Goal:", goal[0].shape)
+        # print("Sample:", sample[0][0].shape)
+        break
 
-    # Dataloader
-    train_loader = DataLoader(train_ds, batch_size=1,
-                                num_workers=cfg['train']['num_cpus'],
+    train_loader = DataLoader(train_ds, batch_size=32,
+                                # num_workers=cfg['train']['num_cpus'],
                                 shuffle = True)
     val_loader = DataLoader(val_ds, batch_size=cfg['train']['batch_size'],
-                                num_workers=cfg['train']['num_cpus'],
+                                # num_workers=cfg['train']['num_cpus'],
                                 shuffle = False)
+
+    # print(f'Train loader length: {len(train_loader)}')
+    # for x, y in train_loader:
+    #     sample_img = x[0]
+    #     print('Image:', np.max(sample_img[0][0,:,:,3].numpy()))
 
     # for batch in train_loader:
     #     print(f'Batch shape: {batch.shape}')

@@ -14,6 +14,7 @@ from cliport.models.streams.two_stream_transport import TwoStreamTransport
 
 from cliport.models.streams.two_stream_attention import TwoStreamAttentionLat
 from cliport.models.streams.two_stream_transport import TwoStreamTransportLat
+from cliport.dataset import BOUNDS
 
 class LocobotTransporterAgentPrimary(LightningModule):
     def __init__(self, name, cfg, train_ds, test_ds):
@@ -38,36 +39,39 @@ class LocobotTransporterAgentPrimary(LightningModule):
         self.in_shape = (160, 96, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG[1:2]
         # self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
-        self.bounds = np.array([[0.2, 0.8], [-0.5, 0.5], [0.10, 0.28]])
+        self.bounds = BOUNDS
 
         self.val_repeats = cfg['train']['val_repeats']
         self.save_steps = cfg['train']['save_steps']
 
+        self.bce_loss = torch.nn.BCELoss()
         self._build_model()
-        
+
         self._optimizers = {
             'attn': torch.optim.Adam(self.attention.parameters(), lr=self.cfg['train']['lr']),
+            'attn_wrap': torch.optim.Adam(self.attention_wrap.parameters(), lr=self.cfg['train']['lr']),
             'trans': torch.optim.Adam(self.transport.parameters(), lr=self.cfg['train']['lr'])
         }
         print("Agent: {}, Logging: {}".format(name, cfg['train']['log']))
 
     def _build_model(self):
         self.attention = None
+        self.attention_wrap = None
         self.transport = None
         raise NotImplementedError()
 
     def forward(self, x):
         raise NotImplementedError()
 
-    def cross_entropy_with_logits(self, pred, labels, reduction='mean'):
-        # Lucas found that both sum and mean work equally well
-        x = (-labels * F.log_softmax(pred, -1))
-        if reduction == 'sum':
-            return x.sum()
-        elif reduction == 'mean':
-            return x.mean()
-        else:
-            raise NotImplementedError()
+    # def cross_entropy_with_logits(self, pred, labels, reduction='mean'):
+    #     # Lucas found that both sum and mean work equally well
+    #     x = (-labels * F.log_softmax(pred, -1))
+    #     if reduction == 'sum':
+    #         return x.sum()
+    #     elif reduction == 'mean':
+    #         return x.mean()
+    #     else:
+    #         raise NotImplementedError()
 
     def attn_forward(self, inp, softmax=True):
         inp_img = inp['inp_img']
@@ -345,7 +349,6 @@ class LocobotTransporterAgentPrimary(LightningModule):
     def load(self, model_path):
         self.load_state_dict(torch.load(model_path)['state_dict'])
         self.to(device=self.device_type)
-
 
 class LocobotTransporterAgent(LocobotTransporterAgentPrimary):
 

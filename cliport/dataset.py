@@ -7,6 +7,7 @@ import glob
 
 import numpy as np
 from torch.utils.data import Dataset
+import torch
 
 from cliport import tasks
 from cliport.tasks import cameras
@@ -27,6 +28,8 @@ TASK_NAMES = sorted(TASK_NAMES)[::-1]
 FOLDER_PREFIX = 'PROCESS'
 FP_CAM_IDX = 1
 MAX_SUBSTEPS = 10
+BOUNDS = np.array([[0.2, 1.0], [-0.5, 0.5], [0.10, 0.28]])
+
 
 class RavensDataset(Dataset):
     """A simple image dataset class."""
@@ -51,7 +54,9 @@ class RavensDataset(Dataset):
         self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60
         # legacy code issue: theta_sigma was newly added
         # self.pix_size = 0.003125
+        # self.in_shape = (320, 256, 6)
         self.pix_size = 0.00625
+        self.in_shape = (160, 128, 6)
         self.cam_idx = cam_idx
         self.fp_cam_idx = FP_CAM_IDX
         if not store:
@@ -62,9 +67,8 @@ class RavensDataset(Dataset):
         self.depth_scale = 1000.0
         # self.in_shape = (320, 160, 6)
         # self.in_shape = (320, 192, 6)
-        self.in_shape = (160, 96, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
-        self.bounds = np.array([[0.2, 0.8], [-0.5, 0.5], [0.10, 0.28]])
+        self.bounds = BOUNDS
 
         self._cache = {}
 
@@ -77,11 +81,11 @@ class RavensDataset(Dataset):
             self.cache = self.cfg['dataset']['cache']
 
             # Check if there sufficient demos in the dataset
-            episode_paths = self.get_epsiode_paths()
+            episode_paths = self.get_episode_paths()
             self.n_episodes = len(episode_paths)
             if self.n_demos > self.n_episodes:
                 raise Exception(f"Requested training on {self.n_demos} demos, "
-                "but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
+                f"but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
 
             episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
             ###
@@ -89,13 +93,13 @@ class RavensDataset(Dataset):
             self.set(episode_paths, episodes, num_steps)
             ###
 
-    def get_epsiode_paths(self):
-        return glob.glob(self._path + "/" + FOLDER_PREFIX + "*/episode*/action.pkl")
+    def get_episode_paths(self):
+        return glob.glob(self._path + "/" + FOLDER_PREFIX + "*/episode*/action-*.pkl")
 
     def get_steps_count(self, episode_paths):
         steps = []
         for epi_path in episode_paths:
-            n = len(pickle.load(open(epi_path, 'rb')))
+            n = len(pickle.load(open(epi_path, 'rb'))[0])
             steps.append(n)
         return steps
 
@@ -175,12 +179,13 @@ class RavensDataset(Dataset):
                                     sdepth.astype(np.uint16))
 
                 side_obs.append(d)
-            dump(side_obs, 'side_obs')
+            return side_obs
 
-        dump_image(observation)
-        dump(action, 'action')
-        dump(reward, 'reward')
-        dump(info, 'info')
+        side_obs = dump_image(observation)
+
+        dump([action, reward, info, side_obs], 'action-reward-info-sideobs')
+        # dump(reward, 'reward')
+        # dump(info, 'info')
 
         self.n_episodes += 1
         self.max_seed = max(self.max_seed, seed)
@@ -271,8 +276,8 @@ class RavensDataset(Dataset):
             # pdb.set_trace()
             num_steps = len(side_obs)
             num_cameras = len(side_obs[0]['configs'][0])
-            print(f'No of steps: {num_steps}')
-            print(f'No of cameras: {num_cameras}')
+            # print(f'No of steps: {num_steps}')
+            # print(f'No of cameras: {num_cameras}')
             step_i = (step_i + num_steps)%num_steps
             step_g = (step_g + num_steps)%num_steps
 
@@ -312,7 +317,7 @@ class RavensDataset(Dataset):
 
             return obs
 
-        def load_field(episode_path, step_i, step_g, field):
+        def load_field(episode_path, field):
 
             name = episode_path[episode_path.find(FOLDER_PREFIX):]
             if cache:
@@ -322,14 +327,8 @@ class RavensDataset(Dataset):
                 else:
                     self._cache[name] = {}
 
-            # path = os.path.join(self._path, self.folder_prefix, field)
-            if field == 'image':
-                side_obs = pickle.load(open(os.path.join(episode_path,
-                                       'side_obs.pkl'), 'rb'))
-                data = load_image_field(episode_path, side_obs, step_i, step_g)
-            else:
-                fname = f'{field}.pkl'
-                data = pickle.load(open(os.path.join(episode_path, fname), 'rb'))
+            fname = f'{field}.pkl'
+            data = pickle.load(open(os.path.join(episode_path, fname), 'rb'))
             if cache:
                 self._cache[name][field] = data
             return data
@@ -337,10 +336,10 @@ class RavensDataset(Dataset):
         # Get filename and random seed used to initialize episode.
         seed = None
 
-        action = load_field(episode_path, step_i, step_g, 'action')
-        reward = load_field(episode_path, step_i, step_g, 'reward')
-        info = load_field(episode_path, step_i, step_g, 'info')
-        obs_1, obs_2 = load_field(episode_path, step_i, step_g, 'image')
+        action, reward, info, side_obs = load_field(episode_path, 'action-reward-info-sideobs')
+        # reward = load_field(episode_path, step_i, step_g, 'reward')
+        # info = load_field(episode_path, step_i, step_g, 'info')
+        obs_1, obs_2 = load_image_field(episode_path, side_obs, step_i, step_g)
 
         i = (obs_1, action[step_i], reward[step_i], info[step_i])
         g = (obs_2, action[step_g], reward[step_g], info[step_g])
@@ -475,7 +474,7 @@ class RavensDataset(Dataset):
     def process_goal(self, goal, perturb_params):
         # Get goal sample.
         (obs, act, _, info) = goal
-        imgs = self.get_image_wrapper(obs)[0]
+        imgs = self.get_image_wrapper(obs)
 
         p0s, p1s = None, None
         p0_thetas, p1_thetas = None, None
@@ -500,13 +499,52 @@ class RavensDataset(Dataset):
         # return sample
         return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturb_params
 
+    def preprocess_sample(self, input_sample):
+
+        def within_image_bounds(p):
+            h, w = p
+            H, W = self.in_shape[:2]
+            if (h>0) and (w>0) and (h<H) and (w<W):
+                return True
+            return False
+
+        img, (p0, p0_theta), (p1, p1_theta), _ = input_sample
+        for substep in range(len(img)):
+            img[substep][:,:,:3] = img[substep][:,:,:3]/255.0
+            img[substep] = torch.tensor(img[substep]).float().permute(2, 0, 1)
+
+        img_dims = self.in_shape[:2]
+        labels = torch.ones((6, *img_dims), dtype=torch.uint8)
+
+        for i in range(3):
+            p = p0[i]
+            if within_image_bounds(p):
+                labels[i, p[0], p[1]] = 0
+
+        for i in range(3, 6):
+            p = p1[i]
+            if within_image_bounds(p):
+                labels[i, p[0], p[1]] = 0
+
+        # img = img.permute(2, 0, 1)
+        return img, labels, (p0_theta, p1_theta)
+
+    def preprocess_goal(self, input_goal):
+        img, _, _, _ = input_goal
+        for substep in range(len(img)):
+            img[substep][:,:,:3] = img[substep][:,:,:3]/255.0
+            img[substep] = torch.tensor(img[substep]).float().permute(2, 0, 1)
+
+        return img
+
     def __len__(self):
         return len(self.idx_to_episode_step)
 
     def __getitem__(self, idx):
         episode_id, step_id = self.idx_to_episode_step[idx]
-        episode_path = self.episode_paths[episode_id][:-10]
-        print('Episode path:', episode_path)
+        episode_path_full = self.episode_paths[episode_id]
+        episode_path = episode_path_full[:episode_path_full.find('action')]
+        # print('Episode path:', episode_path)
 
         # Is the task sequential like stack-block-pyramid-seq?
         is_sequential_task = '-seq' in self._path.split("/")[-1]
@@ -515,16 +553,17 @@ class RavensDataset(Dataset):
         step_i = step_id
         step_g = step_i+1 if is_sequential_task else -1
 
-        print(f'Retrieving {step_i, step_g}')
+        # print(f'Retrieving {step_i, step_g}')
 
         (sample, goal), _ = self.load(episode_path, step_i, step_g,
                                       self.images, self.cache)
-        print(f'Retrieved {step_i, step_g}')
+        # print(f'Retrieved {step_i, step_g}')
 
         sample = self.process_sample(sample, augment=self.augment)
         goal = self.process_goal(goal, perturb_params=sample[-1])
 
-        return sample, goal
+        # return sample[:3], goal[:1]
+        return self.preprocess_sample(sample), self.preprocess_goal(goal)
 
 
 class RavensMultiTaskDataset(RavensDataset):
