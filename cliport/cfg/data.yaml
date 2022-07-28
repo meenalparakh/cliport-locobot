@@ -19,6 +19,7 @@ run_id: 0
 trajs_per_process: 10 #
 multiprocessing: True
 save_data: True  # write episodes to disk
+run_specified: False
 
 dataset:
   type: 'single' # 'single' or 'multi'
