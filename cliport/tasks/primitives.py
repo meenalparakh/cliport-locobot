@@ -16,14 +16,14 @@ class LocobotPickPlace():
         pick_pose, place_pose = action['pose0'], action['pose1']
         center = action['center']
 
-        print(f'pick pose: {pick_pose}, place_pose: {place_pose}')
+        # print(f'pick pose: {pick_pose}, place_pose: {place_pose}')
         # input()
         prepick_pos = list(pick_pose[0]);  prepick_pos[2] += self.height
         postpick_pos = list(pick_pose[0]);  postpick_pos[2] += self.height
         prepick_pose = (prepick_pos, pick_pose[1])
         postpick_pose = (postpick_pos, pick_pose[1])
 
-        print(f'prepick: {prepick_pose}, postpick: {postpick_pose}')
+        # print(f'prepick: {prepick_pose}, postpick: {postpick_pose}')
 
         # if navigator is not None:
         env.motion_planner(prepick_pose[0][:2])

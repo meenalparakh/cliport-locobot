@@ -13,6 +13,7 @@ import glob
 from cliport.utils.multiprocessing_utils import UptownFunc
 from copy import copy
 import pickle
+from multiprocessing import cpu_count
 
 def collect_data(cfg):
 
@@ -123,6 +124,8 @@ def collect_data(cfg):
 
 @hydra.main(config_path='./cfg', config_name='data')
 def main(cfg):
+
+    print(f'Number of cpus being used: {cpu_count()}')
     # Initialize environment and task.
     print('################################################################################')
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], cfg['mode']))

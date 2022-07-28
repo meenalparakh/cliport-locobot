@@ -182,7 +182,7 @@ class RavensDataset(Dataset):
                     d['lang_goal'].append(obs[substep]['lang_goal'])
 
                     num_cameras = len(obs[substep]['image']['color'])
-                    print(f'steps: {step}, substep: {substep}, cameras: {num_cameras}')
+                    # print(f'steps: {step}, substep: {substep}, cameras: {num_cameras}')
 
                     for camera in range(num_cameras):
                         color = np.array(obs[substep]['image']['color'][camera], dtype=np.uint8)
