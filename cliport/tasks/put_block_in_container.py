@@ -71,7 +71,8 @@ class PutBlockInContainerUnseenColors(Task):
             self.lang_goals.append(self.lang_template.format(pick=selected_color_names[0]))
 
         # Only one mistake allowed.
-        self.max_steps = len(blocks) + 1
+        # self.max_steps = len(blocks) + 1
+        self.max_steps = len(blocks)
 
     def generate_random_poses(self, env, box_pose, box_dims, obj_dim, num_objs = 1):
         coeffs_x = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.25 * box_dims[0]

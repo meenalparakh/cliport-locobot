@@ -15,6 +15,7 @@ from cliport.utils import utils
 import cv2
 import pdb
 import matplotlib.pyplot as plt
+from cliport.utils import utils
 
 # See transporter.py, regression.py, dummy.py, task.py, etc.
 # PIXEL_SIZE = 0.003125
@@ -27,8 +28,10 @@ TASK_NAMES = (tasks.names).keys()
 TASK_NAMES = sorted(TASK_NAMES)[::-1]
 FOLDER_PREFIX = 'PROCESS'
 FP_CAM_IDX = 1
+# NUM_EXPLORATION_IMAGES = 2
 MAX_SUBSTEPS = 10
-BOUNDS = np.array([[0.2, 1.0], [-0.5, 0.5], [0.10, 0.28]])
+IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
+BOUNDS = np.array([[0.2, 1.2], [-0.5, 0.5], [0.10, 0.28]])
 
 
 class RavensDataset(Dataset):
@@ -55,8 +58,9 @@ class RavensDataset(Dataset):
         # legacy code issue: theta_sigma was newly added
         # self.pix_size = 0.003125
         # self.in_shape = (320, 256, 6)
+
         self.pix_size = 0.00625
-        self.in_shape = (160, 128, 6)
+        self.in_shape = (160, 160, 4)
         self.cam_idx = cam_idx
         self.fp_cam_idx = FP_CAM_IDX
         if not store:
@@ -70,6 +74,19 @@ class RavensDataset(Dataset):
         self.cam_config = cameras.RealSenseD415.CONFIG
         self.bounds = BOUNDS
 
+        self.crop_size = 40
+        self.pad_size = int(self.crop_size / 2)
+        self.n_rotations = 4
+        self.rotator = utils.ImageRotator(self.n_rotations)
+        self.padding = np.zeros((3, 2), dtype=int)
+        self.padding[:2, :] = self.pad_size
+        self.kernel_shape = (self.crop_size, self.crop_size, self.in_shape[2])
+
+        # if not hasattr(self, 'output_dim'):
+        #     self.output_dim = 3
+        # if not hasattr(self, 'kernel_dim'):
+        #     self.kernel_dim = 3
+
         self._cache = {}
 
         if store:
@@ -81,7 +98,7 @@ class RavensDataset(Dataset):
             self.cache = self.cfg['dataset']['cache']
 
             # Check if there sufficient demos in the dataset
-            episode_paths = self.get_episode_paths()
+            episode_paths = sorted(self.get_episode_paths())
             self.n_episodes = len(episode_paths)
             if self.n_demos > self.n_episodes:
                 raise Exception(f"Requested training on {self.n_demos} demos, "
@@ -109,7 +126,7 @@ class RavensDataset(Dataset):
         self.episode_num_steps = num_steps
         self.sample_set = episodes
         self.idx_to_episode_step = []
-        for episode_id in range(len(self.episode_paths)):
+        for episode_id in self.sample_set:
             for step in range(self.episode_num_steps[episode_id]-1):
                 self.idx_to_episode_step.append((episode_id, step))
 
@@ -189,85 +206,6 @@ class RavensDataset(Dataset):
 
         self.n_episodes += 1
         self.max_seed = max(self.max_seed, seed)
-
-    # def load(self, episode_path, images=True, cache=False):
-    #
-    #     def load_image_field(episode_path, side_obs):
-    #
-    #         num_steps = len(side_obs)
-    #         num_cameras = len(side_obs[0]['configs'][0])
-    #         print(f'No of steps: {num_steps}')
-    #         print(f'No of cameras: {num_cameras}')
-    #
-    #         color_dir = os.path.join(episode_path, 'color')
-    #         depth_dir = os.path.join(episode_path, 'depth')
-    #
-    #         obs = []
-    #         for step in range(num_steps):
-    #             substeps = []
-    #             for substep in range(MAX_SUBSTEPS):
-    #                 substep_obs = {}
-    #                 f_check = f'S{step}-U{substep}-C0.png'
-    #                 exists = os.path.exists(os.path.join(color_dir, f_check))
-    #                 if not exists:
-    #                     break
-    #                 cams_color = []
-    #                 cams_depth = []
-    #                 for cam in self.cam_idx:
-    #                     f = f'S{step}-U{substep}-C{cam}.png'
-    #                     depth = cv2.imread(os.path.join(depth_dir, f), cv2.IMREAD_UNCHANGED)
-    #                     depth = depth / self.depth_scale
-    #                     color = cv2.imread(os.path.join(color_dir, f))
-    #                     color = cv2.cvtColor(color, cv2.COLOR_BGR2RGB)
-    #
-    #                     cams_color.append(color)
-    #                     cams_depth.append(depth)
-    #
-    #                 substep_obs['image'] = {'color': cams_color, 'depth': cams_depth}
-    #                 substep_obs['configs'] = side_obs[step]['configs'][substep]
-    #                 substep_obs['bot_pose'] = side_obs[step]['bot_pose'][substep]
-    #                 substep_obs['bot_jpos'] = side_obs[step]['bot_jpos'][substep]
-    #                 substep_obs['lang_goal'] = side_obs[step]['lang_goal'][substep]
-    #
-    #                 substeps.append(substep_obs)
-    #             obs.append(substeps)
-    #
-    #         return obs
-    #
-    #     def load_field(episode_path, field):
-    #
-    #         name = episode_path[episode_path.find(FOLDER_PREFIX):]
-    #         if cache:
-    #             if name in self._cache:
-    #                 if field in self._cache[name]:
-    #                     return self._cache[name][field]
-    #             else:
-    #                 self._cache[name] = {}
-    #
-    #         # path = os.path.join(self._path, self.folder_prefix, field)
-    #         if field == 'image':
-    #             side_obs = pickle.load(open(os.path.join(episode_path,
-    #                                    'side_obs.pkl'), 'rb'))
-    #             data = load_image_field(episode_path, side_obs)
-    #         else:
-    #             fname = f'{field}.pkl'
-    #             data = pickle.load(open(os.path.join(episode_path, fname), 'rb'))
-    #         if cache:
-    #             self._cache[name][field] = data
-    #         return data
-    #
-    #     # Get filename and random seed used to initialize episode.
-    #     seed = None
-    #
-    #     action = load_field(episode_path, 'action')
-    #     reward = load_field(episode_path, 'reward')
-    #     info = load_field(episode_path, 'info')
-    #     obs = load_field(episode_path, 'image')
-    #
-    #     episode = []
-    #     for i in range(len(action)):
-    #         episode.append((obs[i], action[i], reward[i], info[i]))
-    #     return episode, seed
 
     def load(self, episode_path, step_i, step_g, images=True, cache=False):
 
@@ -361,38 +299,42 @@ class RavensDataset(Dataset):
         hmap = cv2.dilate(hmap, kernel, iterations=1)
 
         img = np.concatenate((cmap,
-                              hmap[Ellipsis, None],
-                              hmap[Ellipsis, None],
+                              # hmap[Ellipsis, None],
+                              # hmap[Ellipsis, None],
                               hmap[Ellipsis, None]), axis=2)
         assert img.shape == self.in_shape, img.shape
         return img
 
-    def get_image_wrapper(self, obs):
+    def get_image_wrapper(self, obs, pairings):
         """Stack color and height images image."""
         images = []
-        for substep in range(len(obs)):
+
+        for higher_substeps in range(len(pairings)):
             # print('Info:', obs[substep]['configs'][0]['position'])
-            substep_obs = obs[substep]['image']
-
             cam_configs = []
-            for idx in self.cam_idx:
-                config = obs[substep]['configs'][idx]
-                pos, ori = config['position'], config['rotation']
-                # print(f'Substep: {substep}, Camera {idx}: position: {pos}, rotation: {ori}')
-                if (idx == self.fp_cam_idx) and (self.img_frame == 'fp'):
-                    bot_pose = obs[substep]['bot_pose']
-                    X_WL = utils.get_transformation_matrix(bot_pose)
-                    X_WC = utils.get_transformation_matrix((config['position'],
-                                                            config['rotation']))
-                    X_LC = np.linalg.inv(X_WL) @ X_WC
-                    pos, ori = utils.get_pose_from_transformation(X_LC)
-                    config['position'], config['rotation'] = pos, ori
+            substep_colors = []
+            substep_depths = []
+            for lower_substeps in pairings[higher_substeps]:
+                substep_colors.extend(obs[lower_substeps]['image']['color'])
+                substep_depths.extend(obs[lower_substeps]['image']['depth'])
+                for idx in self.cam_idx:
+                    config = obs[lower_substeps]['configs'][idx]
+                    pos, ori = config['position'], config['rotation']
+                    # print(f'Substep: {substep}, Camera {idx}: position: {pos}, rotation: {ori}')
+                    if (idx == self.fp_cam_idx) and (self.img_frame == 'fp'):
+                        bot_pose = obs[lower_substeps]['bot_pose']
+                        X_WL = utils.get_transformation_matrix(bot_pose)
+                        X_WC = utils.get_transformation_matrix((config['position'],
+                                                                config['rotation']))
+                        X_LC = np.linalg.inv(X_WL) @ X_WC
+                        pos, ori = utils.get_pose_from_transformation(X_LC)
+                        config['position'], config['rotation'] = pos, ori
 
-                cam_configs.append(config)
+                    cam_configs.append(config)
 
+            substep_obs = {'color': substep_colors, 'depth': substep_depths}
             img = self.get_image(substep_obs, cam_configs)
             images.append(img)
-
         return images
 
     def transform_pick_place(self, act, obs):
@@ -404,7 +346,8 @@ class RavensDataset(Dataset):
 
         acts = []
         p0s, p0_thetas, p1s, p1_thetas, centers = [], [], [], [], []
-        for i, substep_obs in enumerate(obs):
+        for i in range(len(IMAGE_PAIRINGS)):
+            substep_obs = obs[IMAGE_PAIRINGS[i][0]]
             if self.img_frame == 'fp':
                 X_WL = utils.get_transformation_matrix(substep_obs['bot_pose'])
                 X_LW = np.linalg.inv(X_WL)
@@ -438,68 +381,43 @@ class RavensDataset(Dataset):
     def process_sample(self, datum, augment=True):
         # Get training labels from data sample.
         (obs, act, _, info) = datum
-        imgs = self.get_image_wrapper(obs)
+        imgs = self.get_image_wrapper(obs, IMAGE_PAIRINGS)
 
-        p0s, p1s, centers = None, None, None
+        p0s, p1s = None, None
         p0_thetas, p1_thetas = None, None
         perturb_params =  None
 
         if act:
             p0s, p0_thetas, p1s, p1_thetas = self.transform_pick_place(act, obs)
-
-        # Data augmentation.
-        plt.imsave('/Users/meenalp/Desktop/actual_image.png', imgs[0][:,:,:3]/255.0)
-        plt.imsave('/Users/meenalp/Desktop/actual_himage.png', imgs[0][:,:,3])
-
-        sample = {
-            'img': imgs,
-            'p0': p0s, 'p0_theta': p0_thetas,
-            'p1': p1s, 'p1_theta': p1_thetas,
-            # 'centers': centers,
-            'perturb_params': perturb_params
-        }
-
-        # Add language goal if available.
-        if 'lang_goal' not in info:
-            warnings.warn("No language goal. Defaulting to 'task completed.'")
-
-        if info and 'lang_goal' in info:
-            sample['lang_goal'] = info['lang_goal']
-        else:
-            sample['lang_goal'] = "task completed."
-
-        # return sample
         return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturb_params
 
     def process_goal(self, goal, perturb_params):
         # Get goal sample.
         (obs, act, _, info) = goal
-        imgs = self.get_image_wrapper(obs)
+        imgs = self.get_image_wrapper(obs, IMAGE_PAIRINGS[:1])
 
         p0s, p1s = None, None
         p0_thetas, p1_thetas = None, None
-        center = None
-        sample = {
-            'img': imgs,
-            'p0': p0s, 'p0_theta': p0_thetas,
-            'p1': p1s, 'p1_theta': p1_thetas,
-            # 'center': center,
-            'perturb_params': perturb_params
-        }
 
-        # Add language goal if available.
-        if 'lang_goal' not in info:
-            warnings.warn("No language goal. Defaulting to 'task completed.'")
-
-        if info and 'lang_goal' in info:
-            sample['lang_goal'] = info['lang_goal']
-        else:
-            sample['lang_goal'] = "task completed."
-
-        # return sample
         return imgs, (p0s, p0_thetas), (p1s, p1_thetas), perturb_params
 
     def preprocess_sample(self, input_sample):
+
+        def get_crops(img, pivot):
+            margin = self.pad_size
+
+            padded_image = torch.nn.ZeroPad2d(margin)(img)
+            pv = np.array(pivot) + margin
+            # new_img = img.permute(2, 0, 1)
+            new_img = padded_image[None, ...]
+            crop = new_img.repeat(self.n_rotations, 1, 1, 1)
+            crop = self.rotator(crop, pivot=pv)
+
+            crop = torch.cat(crop, dim=0)
+            dims = (pv - margin), (pv + margin)
+            crop = crop[:,:,dims[0][0]:dims[1][0], dims[0][1]:dims[1][1]]
+            # crop = crop.permute(0, 2, 3, 1)
+            return crop
 
         def within_image_bounds(p):
             h, w = p
@@ -513,21 +431,51 @@ class RavensDataset(Dataset):
             img[substep][:,:,:3] = img[substep][:,:,:3]/255.0
             img[substep] = torch.tensor(img[substep]).float().permute(2, 0, 1)
 
-        img_dims = self.in_shape[:2]
-        labels = torch.ones((6, *img_dims), dtype=torch.uint8)
+        # img[2] = img[2][None, ...] # dimension to make the orientation correlation easier
+        # img[3] = img[3][None, ...]
 
-        for i in range(3):
+        crops = get_crops(img[1], p0[1])
+        img_dims = self.in_shape[:2]
+        labels = torch.zeros((4, *img_dims), dtype=torch.uint8)
+
+        for i in range(2):
             p = p0[i]
             if within_image_bounds(p):
-                labels[i, p[0], p[1]] = 0
+                r, c = p
+            else:
+                print('Warning: Pick point not in the image.')
+                r = max(min(p[0], img_dims[0]), 0)
+                c = max(min(p[1], img_dims[1]), 0)
+                # labels[i, r, c] = 1.0
+            sigma = 1.0
+            for row in range(r-1, r+2):
+                for col in range(c-1, c+2):
+                    if not within_image_bounds((row, col)):
+                        continue
+                    d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
+                    labels[i, row, col] = np.exp(-d_sq)
+            labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
 
-        for i in range(3, 6):
+        for i in range(2, 4):
             p = p1[i]
             if within_image_bounds(p):
-                labels[i, p[0], p[1]] = 0
+                r, c = p
+            else:
+                print('Warning: Place point not in the image.')
+                r = max(min(p[0], img_dims[0]), 0)
+                c = max(min(p[1], img_dims[1]), 0)
+                # labels[i, r, c] = 1.0
+            sigma = 1.0
+            for row in range(r-3, r+4):
+                for col in range(c-3, c+4):
+                    if not within_image_bounds((row, col)):
+                        continue
+                    d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
+                    labels[i, row, col] = np.exp(-d_sq)
+            labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
 
         # img = img.permute(2, 0, 1)
-        return img, labels, (p0_theta, p1_theta)
+        return img, labels, crops, (p0, p0_theta, p1, p1_theta)
 
     def preprocess_goal(self, input_goal):
         img, _, _, _ = input_goal
@@ -553,16 +501,12 @@ class RavensDataset(Dataset):
         step_i = step_id
         step_g = step_i+1 if is_sequential_task else -1
 
-        # print(f'Retrieving {step_i, step_g}')
-
         (sample, goal), _ = self.load(episode_path, step_i, step_g,
                                       self.images, self.cache)
-        # print(f'Retrieved {step_i, step_g}')
 
         sample = self.process_sample(sample, augment=self.augment)
         goal = self.process_goal(goal, perturb_params=sample[-1])
 
-        # return sample[:3], goal[:1]
         return self.preprocess_sample(sample), self.preprocess_goal(goal)
 
 

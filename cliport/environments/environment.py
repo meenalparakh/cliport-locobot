@@ -34,6 +34,9 @@ PLANE_URDF_PATH = 'plane/plane.urdf'
 LOCOBOT_URDF = 'locobot_description/locobot.urdf'
 CUBE_URDF = 'assets/cube/cube.urdf'
 FP_CAM_IDX = 1
+# NUM_EXPLORATION_IMAGES = 2
+IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
+
 ## TODO
 ## (1) fix the image size from camera - currently resizing
 ##     instead of setting camera config
@@ -208,10 +211,14 @@ class Environment(gym.Env):
 
 
         bot_pos = random.choice(self.ws_edgepts[0])
+        dx, dy = np.array(self.table_center) - np.array(bot_pos)
+        theta = np.arctan2(dy, dx) + np.random.uniform(-np.pi/6, np.pi/6)
+        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
+
         self.bot_id = pybullet_utils.load_urdf(self.pb_client,
                                                os.path.join(self.assets_root,
                                                             LOCOBOT_URDF),
-                                               [*bot_pos, 0.001])
+                                               [*bot_pos, 0.001], ori)
 
         self.locobot = Locobot(self, self.bot_id)
         # import pdb; pdb.set_trace()
@@ -273,6 +280,9 @@ class Environment(gym.Env):
         return substep_obs, reward, done, info
 
     def get_obs_wrapper(self):
+
+        while not self.is_static:
+            self.step_simulation()
 
         self.agent_cams[-1] = self.locobot.get_camera_config(bot_frame=False)
         obs = self._get_obs()
@@ -639,14 +649,17 @@ class Environment(gym.Env):
         # while not self.is_static:
         #     self.step_simulation()
 
-        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta-np.pi/6])
+        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
         self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
+        self.locobot.set_locobot_camera_pan_tilt(-np.pi/6, 0.6)
+
         for i in range(10):
             self.step_simulation()
         obs.append(self.get_obs_wrapper())
 
-        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta+np.pi/6])
-        self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
+        # ori = self.pb_client.getQuaternionFromEuler([0, 0, theta+np.pi/6])
+        # self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
+        self.locobot.set_locobot_camera_pan_tilt(np.pi/6, 0.6)
         for i in range(10):
             self.step_simulation()
         obs.append(self.get_obs_wrapper())
@@ -670,6 +683,8 @@ class Environment(gym.Env):
             raise RuntimeError(f'No edgepoint is within {tol_dist} of edgepoints.')
 
         success = self.movej(p='home')
+        self.locobot.set_locobot_camera_pan_tilt(0, 0.6)
+
         print(f'Setting pose to homej: {success}')
         # success &= _move(pt1_idx, target_idx, target_pos)
         edge_pt = np.array(self.ws_edgepts[0][target_idx])

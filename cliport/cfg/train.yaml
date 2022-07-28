@@ -40,7 +40,7 @@ train:
 
   # script configs
   gpu: [0] # -1 for all
-  num_cpus: 2
+  num_cpus: 8
   log: False # log metrics and stats to wandb
   n_val: 100
   val_repeats: 1

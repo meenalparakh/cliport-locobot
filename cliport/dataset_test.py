@@ -2,20 +2,57 @@
 
 import os
 from pathlib import Path
-
+import numpy as np
 import torch
 from cliport import agents
 from cliport.dataset import RavensDataset, RavensMultiTaskDataset
-
-import hydra
-import pdb
-import pickle
+from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-import numpy as np
+import hydra
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
+import pdb
+import random
 import cv2
 
 @hydra.main(config_path="./cfg", config_name='train')
 def main(cfg):
+    # Logger
+    wandb_logger = WandbLogger(name=cfg['tag']) if cfg['train']['log'] else None
+
+    # Checkpoint saver
+    hydra_dir = Path(os.getcwd())
+    checkpoint_path = os.path.join(cfg['train']['train_dir'], 'checkpoints')
+    last_checkpoint_path = os.path.join(checkpoint_path, 'last.ckpt')
+    last_checkpoint = last_checkpoint_path if os.path.exists(last_checkpoint_path) and cfg['train']['load_from_last_ckpt'] else None
+    checkpoint_callback = ModelCheckpoint(
+        monitor=cfg['wandb']['saver']['monitor'],
+        filepath=os.path.join(checkpoint_path, 'best'),
+        save_top_k=1,
+        save_last=True,
+    )
+
+    # Trainer
+    max_epochs = cfg['train']['n_steps'] // cfg['train']['n_demos']
+    trainer = Trainer(
+        gpus=cfg['train']['gpu'],
+        fast_dev_run=cfg['debug'],
+        logger=wandb_logger,
+        checkpoint_callback=checkpoint_callback,
+        max_epochs=max_epochs,
+        automatic_optimization=False,
+        check_val_every_n_epoch=max_epochs // 50,
+        resume_from_checkpoint=last_checkpoint,
+    )
+
+    # Resume epoch and global_steps
+    if last_checkpoint:
+        print(f"Resuming: {last_checkpoint}")
+        last_ckpt = torch.load(last_checkpoint)
+        trainer.current_epoch = last_ckpt['epoch']
+        trainer.global_step = last_ckpt['global_step']
+        del last_ckpt
 
     # Config
     data_dir = cfg['train']['data_dir']
@@ -29,48 +66,79 @@ def main(cfg):
     dataset_type = cfg['dataset']['type']
 
     train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg,
-                            store=False, cam_idx=[0,1], n_demos=n_demos, augment=False)
+                             store=False, cam_idx=[0,1], n_demos=n_demos, augment=False)
+    val_ds = RavensDataset(os.path.join(data_dir, '{}-val'.format(task)), cfg,
+                            store=False, cam_idx=[0,1], n_demos=n_val, augment=False)
 
-# data = train_ds.load(0)
-    episode, _  = train_ds.load(train_ds.episode_paths[-1][:-10])
+    # test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=num_cpus, shuffle = False)
 
-    print(f'Episode length: {len(episode)}')
-    for step in range(len(episode)):
-        sample = episode[step]
-        obs, act, reward, info = sample
+    agent = agents.names[agent_type](name, cfg, train_ds, val_ds)
 
-        datapoint = train_ds.process_sample(sample, augment=False)
-        # print(datapoint)
-        # print(len(datapoint['img']))
-        # print(datapoint['p0'])
-        print('Number of substeps:', len(datapoint['img']))
-        for substep in range(len(datapoint['img'])):
-            plt.imsave(f'/Users/meenalp/Desktop/step_{step}_{substep}.jpeg', obs[substep]['image']['color'][0])
-            color = cv2.cvtColor(datapoint['img'][substep][:,:,:3], cv2.COLOR_RGB2BGR)
-            depth = datapoint['img'][substep][:,:,3]
-            print('Maximum in depth image', np.max(depth))
-            depth = depth/np.max(depth)
+    train_loader = DataLoader(train_ds, batch_size=32,
+                                # num_workers=cfg['train']['num_cpus'],
+                                shuffle = True)
+    val_loader = DataLoader(val_ds, batch_size=cfg['train']['batch_size'],
+                                # num_workers=cfg['train']['num_cpus'],
+                                shuffle = False)
 
-            height, width = color.shape[:2]
-            if datapoint['p0'] is None:
-                break
-            p0, p1 = datapoint['p0'][substep], datapoint['p1'][substep]
-            print('PICK AND PLACE POINTS', p0, p1)
-            d0 = max(0, p0[1] - 10), max(0, p0[0] - 10)
-            d0_ = min(width, p0[1] + 10), min(height, p0[0] + 10)
-            d1 = max(0, p1[1] - 10), max(0, p1[0] - 10)
-            d1_ = min(width, p1[1] + 10), min(height, p1[0] + 10)
+    print(f'Train loader length: {len(train_loader)}')
+    for idx, batch_data in enumerate(train_loader):
+        sample, goal = batch_data
+        # pdb.set_trace()
+        agent.training_step(batch_data, idx)
+        # print('Okay loading dataloader, length of batch', sample[0][0].shape)
 
-            cv2.rectangle(color, d0, d0_, (0, 0, 255), 2)
-            cv2.rectangle(color, d1, d1_, (0, 255, 0), 2)
+    # trainer.fit(agent)
 
+
+    print(f'Length of dataset: {len(train_ds)}')
+    print(f'steps description: {train_ds.idx_to_episode_step}')
+    print(f'Numsteps: {train_ds.episode_num_steps}')
+
+    i = random.choice(range(len(train_ds)))
+    sample, goal = train_ds[i]
+    imgs = sample[0]
+    labels = sample[1]
+    crops = sample[2]
+
+    show_crops = False
+    if show_crops:
+        print(i, train_ds.idx_to_episode_step[i])
+        print("shape of crops:", crops.shape)
+        for i in range(crops.shape[0]):
+            crop = crops[i].permute(1, 2, 0)
+            cmap = np.rint(crop[:,:,:3].numpy()*255)
+            cmap = cv2.cvtColor(cmap, cv2.COLOR_RGB2BGR)
+            hmap = crop[:,:,3].numpy()
+            cv2.imwrite(f'/Users/meenalp/Desktop/crop_{i}.png', cmap)
+            plt.imsave(f'/Users/meenalp/Desktop/crop_hmap_{i}.png', hmap)
+
+
+    save_labelled_images = False
+    if save_labelled_images:
+        print("Number of substeps:", len(imgs))
+        for substep in range(len(imgs)):
+            im = imgs[substep].permute(1, 2, 0)
+            cmap = np.rint(im[:,:,:3].numpy()*255)
+            # print(cmap[80,80,0])
+            hmap = im[:,:,3].numpy()
+            p = np.unravel_index(torch.argmax(labels[substep]), labels[substep].shape)
+            print(p)
+
+            height, width = cmap.shape[:2]
+
+            d0 = max(0, p[1] - 10), max(0, p[0] - 10)
+            d0_ = min(width, p[1] + 10), min(height, p[0] + 10)
+
+            cv2.rectangle(cmap, d0, d0_, (255, 0, 0), 1)
+            cv2.rectangle(hmap, d0, d0_, (255, 0, 0), 1)
+
+            print(np.max(cmap))
+            cmap = cv2.cvtColor(cmap, cv2.COLOR_RGB2BGR)
             # print(depth)
-            cv2.imwrite(f'/Users/meenalp/Desktop/labelled_img_step_{step}_{substep}.png', color)
-            plt.imsave(f'/Users/meenalp/Desktop/labelled_img_step_depth_{step}_{substep}.png', depth)
+            cv2.imwrite(f'/Users/meenalp/Desktop/labelled_img_{substep}.png', cmap)
+            plt.imsave(f'/Users/meenalp/Desktop/labelled_img_depth_{substep}.png', hmap)
 
 
 if __name__ == '__main__':
     main()
-
-
-# python cliport/train.py train.data_dir=$(pwd)/data_check_run train.gpu=0 train.task=stack-block-pyramid-seq-seen-colors train.n_demos=5 train.n_val=2 train.agent=cliport
