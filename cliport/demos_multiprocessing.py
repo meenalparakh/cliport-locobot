@@ -15,6 +15,8 @@ from copy import copy
 import pickle
 from multiprocessing import cpu_count
 
+os.environ['NUMEXPR_MAX_THREADS'] = '96'
+
 def collect_data(cfg):
 
     run_id = cfg['run_id']
