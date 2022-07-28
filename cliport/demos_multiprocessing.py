@@ -36,8 +36,7 @@ def collect_data(cfg):
     agent = task.oracle(env, locobot=cfg['locobot'])
 
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], cfg['mode']))
-    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False,
-                            process_num=run_id)
+    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False, process_num=run_id)
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
 
@@ -76,8 +75,8 @@ def collect_data(cfg):
             raise Exception("!!! Seeds for val set will overlap with the test set !!!")
 
         # Start video recording (NOTE: super slow)
-        if record:
-            env.start_rec(f'{dataset.n_episodes+1:06d}')
+        # if record:
+        #     env.start_rec(f'{dataset.n_episodes+1:06d}')
 
         # Rollout expert policy
         for _ in range(task.max_steps):
@@ -89,10 +88,7 @@ def collect_data(cfg):
             # for substep in range(len(_obs)):
             #     print('Data collection:', _obs[substep]['configs'][1]['position'])
             # if isinstance(_obs, list):
-            episode.append(([*obs, *(_obs[:-env.num_turns])],
-                            act,
-                            reward,
-                            info))
+            episode.append(([*obs, *(_obs[:-env.num_turns])], act, reward, info))
             # else:
             # episode.append((obs, act, reward, info))
 
