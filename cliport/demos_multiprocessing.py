@@ -146,7 +146,9 @@ def main(cfg):
             run = 1 + max(process_lst)
 
     if not cfg['multiprocessing']:
-        cfg['run_id'] = run
+        if not cfg['run_specified']:
+            cfg['run_id'] = run
+
         num_trajs_tried = collect_data(cfg)
 
     else:
