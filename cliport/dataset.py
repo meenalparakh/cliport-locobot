@@ -31,7 +31,7 @@ FP_CAM_IDX = 1
 # NUM_EXPLORATION_IMAGES = 2
 MAX_SUBSTEPS = 10
 IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
-BOUNDS = np.array([[0.2, 1.4], [-0.6, 0.6], [0.10, 0.28]])
+BOUNDS = np.array([[0.05, 1.25], [-0.6, 0.6], [0.10, 0.28]])
 PIXEL_SIZE = 0.00625
 IMG_SHAPE = (192, 192, 4)
 
@@ -445,8 +445,10 @@ class RavensDataset(Dataset):
             if within_image_bounds(p):
                 r, c = p
             else:
-                print('Warning: Pick point not in the image.')
-                pdb.set_trace()
+#                 print('Warning: Pick point not in the image.')
+#                 print(f'Image shape: {img[i].shape}')
+#                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_pick.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
+#                 assert False
                 r = max(min(p[0], img_dims[0]), 0)
                 c = max(min(p[1], img_dims[1]), 0)
                 # labels[i, r, c] = 1.0
@@ -464,7 +466,11 @@ class RavensDataset(Dataset):
             if within_image_bounds(p):
                 r, c = p
             else:
-                print('Warning: Place point not in the image.')
+#                 print('Warning: Place point not in the image.')
+#                 print(f'Image shape: {img[i].shape}')
+
+#                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_place.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
+#                 assert False
                 r = max(min(p[0], img_dims[0]), 0)
                 c = max(min(p[1], img_dims[1]), 0)
                 # labels[i, r, c] = 1.0

@@ -92,7 +92,7 @@ class LocobotTransporterAgent(LightningModule):
         # Lucas found that both sum and mean work equally well
         batch_size = pred.shape[0]
         pred = pred.reshape((batch_size, -1))
-        print("prediction shape after flattening:", pred.shape)
+#         print("prediction shape after flattening:", pred.shape)
         labels = labels.reshape((batch_size, -1))
         log_prob = F.log_softmax(pred, -1)
         x = -(labels * log_prob)
@@ -135,7 +135,7 @@ class LocobotTransporterAgent(LightningModule):
 
         total_loss = loss0 + loss1 + loss2 + loss3
         self.log('train_loss', total_loss)
-        print(f'Train batch loss: {total_loss}')
+#         print(f'Train batch loss: {total_loss}')
         return total_loss
 
     def validation_step(self, batch, batch_idx):
@@ -164,5 +164,5 @@ class LocobotTransporterAgent(LightningModule):
 
         total_loss = loss0 + loss1 + loss2 + loss3
         self.log('val_loss', total_loss)
-        print(f'Val batch loss: {total_loss}')
+#         print(f'Val batch loss: {total_loss}')
         return total_loss
