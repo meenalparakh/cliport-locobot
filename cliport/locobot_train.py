@@ -51,7 +51,7 @@ def main(cfg):
     train_loader = DataLoader(train_ds, batch_size=cfg['train']['batch_size'],
                                 num_workers=cfg['train']['num_cpus'],
                                 shuffle = True)
-    val_loader = DataLoader(val_ds, batch_size==cfg['train']['batch_size'],
+    val_loader = DataLoader(val_ds, batch_size=cfg['train']['batch_size'],
                                 num_workers=cfg['train']['num_cpus'],
                                 shuffle = False)
 
