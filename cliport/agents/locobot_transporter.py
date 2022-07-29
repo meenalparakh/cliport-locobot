@@ -9,7 +9,7 @@ from pytorch_lightning import LightningModule
 from cliport.tasks import cameras
 from cliport.utils import utils
 from cliport.models.resnet import IdentityBlock, ConvBlock
-from cliport.dataset import BOUNDS
+from cliport.dataset import BOUNDS, PIXEL_SIZE, IMG_SHAPE
 
 
 def get_renset_layers(input_dim, output_dim, batchnorm):
@@ -66,8 +66,8 @@ class LocobotTransporterAgent(LightningModule):
         self.name = name
         self.task = cfg['train']['task']
 
-        self.pix_size = 0.00625
-        self.in_shape = (160, 160, 4)
+        self.pix_size = PIXEL_SIZE
+        self.in_shape = IMG_SHAPE
 
         self.cam_config = cameras.RealSenseD415.CONFIG[1:2]
         self.bounds = BOUNDS

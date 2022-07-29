@@ -31,9 +31,9 @@ FP_CAM_IDX = 1
 # NUM_EXPLORATION_IMAGES = 2
 MAX_SUBSTEPS = 10
 IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
-BOUNDS = np.array([[0.2, 1.2], [-0.5, 0.5], [0.10, 0.28]])
+BOUNDS = np.array([[0.2, 1.4], [-0.6, 0.6], [0.10, 0.28]])
 PIXEL_SIZE = 0.00625
-IMG_SHAPE = (160, 160, 4)
+IMG_SHAPE = (192, 192, 4)
 
 class RavensDataset(Dataset):
     """A simple image dataset class."""
@@ -446,6 +446,7 @@ class RavensDataset(Dataset):
                 r, c = p
             else:
                 print('Warning: Pick point not in the image.')
+                pdb.set_trace()
                 r = max(min(p[0], img_dims[0]), 0)
                 c = max(min(p[1], img_dims[1]), 0)
                 # labels[i, r, c] = 1.0
