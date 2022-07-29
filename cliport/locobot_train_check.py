@@ -61,45 +61,17 @@ def main(cfg):
     agent = agents.names[agent_type](name, cfg)
     agent.apply(initialize_weights)
 
-    logs_dir = name
-    print(f'Log dir: {name}')
-    logger = WandbLogger(project=logs_dir)
-    print('logger initialized!.')
+    agent.train()
+    for epoch in range(cfg['train']['max_epochs']):
+        losses = []
+        for idx, batch in enumerate(train_loader):
+            agent._optimizers.zero_grad()
+            loss = agent.training_step(batch, idx)
+            loss.backward()
+            agent._optimizers.step()
+            losses.append(loss.item())
+        print(f'Epoch: {epoch}, Loss: {np.mean(loss)}')
 
-    val_checkpoint = ModelCheckpoint(
-        filename='min_val_loss',
-        monitor='val_loss',
-        mode='min',
-        save_top_k=3,
-        dirpath = logs_dir + '/'
-    )
-    latest_checkpoint = ModelCheckpoint(
-        filename = logs_dir + '/latest',
-        monitor = 'step',
-        mode = 'max',
-        every_n_train_steps = 500,
-        save_top_k = 1
-    )
-
-    callbacks = [val_checkpoint, latest_checkpoint]
-    max_epochs = cfg['train']['max_epochs']
-    trainer = Trainer(callbacks=callbacks,
-                      logger=logger,
-                     devices=num_gpus,
-                      precision=16,
-                     # check_val_every_n_epoch=val_every_n_epochs,
-                      max_epochs=cfg['train']['max_epochs'])
-
-    print('Starting fitting')
-
-    # print(f'Num samples: {trainer.num_training_samples}')
-
-    trainer.fit(agent, train_loader, val_loader)
-    # print(f'Num samples: {trainer.num_training_samples}')
-
-    # for idx, batch in enumerate(train_loader):
-    #     agent.training_step(batch, idx)
-    print('done')
 
     # pdb.set_trace()
 
