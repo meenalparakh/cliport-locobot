@@ -32,7 +32,8 @@ FP_CAM_IDX = 1
 MAX_SUBSTEPS = 10
 IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
 BOUNDS = np.array([[0.2, 1.2], [-0.5, 0.5], [0.10, 0.28]])
-
+PIXEL_SIZE = 0.00625
+IMG_SHAPE = (160, 160, 4)
 
 class RavensDataset(Dataset):
     """A simple image dataset class."""
@@ -59,8 +60,8 @@ class RavensDataset(Dataset):
         # self.pix_size = 0.003125
         # self.in_shape = (320, 256, 6)
 
-        self.pix_size = 0.00625
-        self.in_shape = (160, 160, 4)
+        self.pix_size = PIXEL_SIZE
+        self.in_shape = IMG_SHAPE
         self.cam_idx = cam_idx
         self.fp_cam_idx = FP_CAM_IDX
         if not store:
@@ -287,9 +288,9 @@ class RavensDataset(Dataset):
 
     def get_image(self, obs, cam_config=None):
         """Stack color and height images image."""
-
-        if cam_config is None:
-            cam_config = self.cam_config
+        #
+        # if cam_config is None:
+        #     cam_config = self.cam_config
 
         # Get color and height maps from RGB-D images.
         cmap, hmap = utils.get_fused_heightmap(

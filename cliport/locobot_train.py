@@ -44,14 +44,14 @@ def main(cfg):
     dataset_type = cfg['dataset']['type']
 
     train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg,
-                             store=False, cam_idx=[0,1], n_demos=n_demos, augment=False)
+                             store=False, cam_idx=[1], n_demos=n_demos, augment=False)
     val_ds = RavensDataset(os.path.join(data_dir, '{}-val'.format(task)), cfg,
-                            store=False, cam_idx=[0,1], n_demos=n_val, augment=False)
+                            store=False, cam_idx=[1], n_demos=n_val, augment=False)
 
-    train_loader = DataLoader(train_ds, batch_size=5,
+    train_loader = DataLoader(train_ds, batch_size=cfg['train']['batch_size'],
                                 num_workers=cfg['train']['num_cpus'],
                                 shuffle = True)
-    val_loader = DataLoader(val_ds, batch_size=5,
+    val_loader = DataLoader(val_ds, batch_size==cfg['train']['batch_size'],
                                 num_workers=cfg['train']['num_cpus'],
                                 shuffle = False)
 
@@ -82,12 +82,12 @@ def main(cfg):
     )
 
     callbacks = [val_checkpoint, latest_checkpoint]
-    max_epochs = cfg['train']['n_steps'] // cfg['train']['n_demos']
+    max_epochs = cfg['train']['max_epochs']
     trainer = Trainer(callbacks=callbacks,
                       logger=logger,
-                     # accelerator=accelerator,
-                     # devices=num_gpus,
-                      precision='bf16',
+                     accelerator=accelerator,
+                     devices=num_gpus,
+                      precision=16,
                      # check_val_every_n_epoch=val_every_n_epochs,
                       max_epochs=max_epochs)
 

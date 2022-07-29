@@ -14,6 +14,7 @@ from cliport.utils.multiprocessing_utils import UptownFunc
 from copy import copy
 import pickle
 from multiprocessing import cpu_count
+import time
 
 os.environ['NUMEXPR_MAX_THREADS'] = '96'
 
@@ -41,16 +42,18 @@ def collect_data(cfg):
     print(f"Mode: {task.mode}")
 
     # Train seeds are even and val/test seeds are odd. Test seeds are offset by 10000
-    seed = dataset.max_seed
-    if seed < 0:
-        if task.mode == 'train':
-            seed = -2
-        elif task.mode == 'val': # NOTE: beware of increasing val set to >100
-            seed = -1
-        elif task.mode == 'test':
-            seed = -1 + 10000
-        else:
-            raise Exception("Invalid mode. Valid options: train, val, test")
+    seed = cfg['seed']
+
+    # seed = dataset.max_seed
+    # if seed < 0:
+    #     if task.mode == 'train':
+    #         seed = -2
+    #     elif task.mode == 'val': # NOTE: beware of increasing val set to >100
+    #         seed = -1
+    #     elif task.mode == 'test':
+    #         seed = -1 + 10000
+    #     else:
+    #         raise Exception("Invalid mode. Valid options: train, val, test")
 
     # Collect training data from oracle demonstrations.
     num_trials = 0
@@ -58,12 +61,14 @@ def collect_data(cfg):
         episode, total_reward = [], 0
         seed += 2
 
-        seed = np.random.randint(0, 100)
+        # seed = np.random.randint(0, 100)
+        # seed = np.random.uniform(1, 10)
+
         # Set seeds.
         np.random.seed(seed)
         random.seed(seed)
 
-        print('Oracle demo: {}/{} | Seed: {}'.format(dataset.n_episodes + 1, cfg['n'], seed))
+        print('Oracle demo: {}/{}'.format(dataset.n_episodes + 1, cfg['n']))
 
         env.set_task(task)
         obs = env.reset()
@@ -71,8 +76,8 @@ def collect_data(cfg):
         reward = 0
 
         # Unlikely, but a safety check to prevent leaks.
-        if task.mode == 'val' and seed > (-1 + 10000):
-            raise Exception("!!! Seeds for val set will overlap with the test set !!!")
+        # if task.mode == 'val' and seed > (-1 + 10000):
+        #     raise Exception("!!! Seeds for val set will overlap with the test set !!!")
 
         # Start video recording (NOTE: super slow)
         # if record:
@@ -141,9 +146,12 @@ def main(cfg):
         if not (process_lst == []):
             run = 1 + max(process_lst)
 
+    seed = int(time.time())
+
     if not cfg['multiprocessing']:
         if not cfg['run_specified']:
             cfg['run_id'] = run
+            cfg['seed'] = seed
 
         num_trajs_tried = collect_data(cfg)
 
@@ -161,6 +169,7 @@ def main(cfg):
             cfg_ = copy(cfg)
             cfg_['run_id'] = run + i
             cfg_['n'] = num_processes_list[i]
+            cfg_['seed'] = seed + 5*i*num_trajs_per_process
             arguments.append(cfg_)
 
         P = UptownFunc()

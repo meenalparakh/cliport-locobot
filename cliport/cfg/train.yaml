@@ -26,7 +26,8 @@ train:
   # agent: two_stream_full_clip_lingunet_lat_transporter
   agent: 'locobot'
   n_demos: 1000
-  n_steps: 201000 # use 601000 for multi-task models
+  # n_steps: 201000 # use 601000 for multi-task models
+  max_epochs: 200
 
   # hyper params
   n_rotations: 36

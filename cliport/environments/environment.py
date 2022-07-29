@@ -253,8 +253,8 @@ class Environment(gym.Env):
         if action is not None:
             timeout, substep_obs = self.task.primitive(self, action)
             for substep in range(len(substep_obs)):
-                print('Inside step: substep', substep,
-                        substep_obs[substep]['configs'][FP_CAM_IDX]['position'])
+                # print('Inside step: substep', substep,
+                #         substep_obs[substep]['configs'][FP_CAM_IDX]['position'])
 
             # Exit early if action times out. We still return an observation
             # so that we don't break the Gym API contract.
@@ -675,7 +675,7 @@ class Environment(gym.Env):
             # print(f'Distance of {target_pos} from {id} ({pt}): {d}, ')
             if d < tol_dist:
                 target_idx = id
-                print(f'Target index: {target_idx}')
+                # print(f'Target index: {target_idx}')
                 break
         # assert False
         if target_idx is None:
@@ -685,7 +685,7 @@ class Environment(gym.Env):
         success = self.movej(p='home')
         self.locobot.set_locobot_camera_pan_tilt(0, 0.6)
 
-        print(f'Setting pose to homej: {success}')
+        # print(f'Setting pose to homej: {success}')
         # success &= _move(pt1_idx, target_idx, target_pos)
         edge_pt = np.array(self.ws_edgepts[0][target_idx])
         dx, dy = np.array(target_pos) - np.array(edge_pt)
