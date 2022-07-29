@@ -252,7 +252,7 @@ class Environment(gym.Env):
 
         if action is not None:
             timeout, substep_obs = self.task.primitive(self, action)
-            for substep in range(len(substep_obs)):
+            # for substep in range(len(substep_obs)):
                 # print('Inside step: substep', substep,
                 #         substep_obs[substep]['configs'][FP_CAM_IDX]['position'])
 
