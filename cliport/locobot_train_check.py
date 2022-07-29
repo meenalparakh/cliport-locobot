@@ -67,18 +67,29 @@ def main(cfg):
 #     logger = CSVLogger("CSV logs", name=logs_dir)
     logger = WandbLogger(project='cliport-test', offline=True)
     print('logger initialized!.')
-    
+
     max_epochs = cfg['train']['max_epochs']
-    trainer = Trainer(logger=logger,
-                      accelerator='gpu',
-                      devices=1,
-                      precision=16,
-                      log_every_n_steps=2,
-                     # check_val_every_n_epoch=val_every_n_epochs,
-                      max_epochs=cfg['train']['max_epochs'])
-    
+
+    if torch.cuda.is_available():
+        trainer = Trainer(logger=logger,
+                          accelerator='gpu',
+                          devices=1,
+                          precision=16,
+                          log_every_n_steps=2,
+                         # check_val_every_n_epoch=val_every_n_epochs,
+                          max_epochs=cfg['train']['max_epochs'])
+    else:
+        trainer = Trainer(logger=logger,
+                          accelerator='cpu',
+                          devices=0,
+                          precision='bf16',
+                          log_every_n_steps=2,
+                         # check_val_every_n_epoch=val_every_n_epochs,
+                          max_epochs=cfg['train']['max_epochs'])
+
+
     print('Starting fitting')
-    
+
     trainer.fit(agent, train_loader, val_loader)
     print('done')
 #     agent.train()

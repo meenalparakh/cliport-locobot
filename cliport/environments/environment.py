@@ -25,7 +25,7 @@ from cliport.environments.utils.common import *
 
 import sys
 import random
-
+from dataset import FP_CAM_IDX, PIXEL_SIZE
 PLACE_STEP = 0.0003
 PLACE_DELTA_THRESHOLD = 0.005
 
@@ -33,7 +33,7 @@ WORKSPACE_URDF_PATH = 'table/table.urdf'
 PLANE_URDF_PATH = 'plane/plane.urdf'
 LOCOBOT_URDF = 'locobot_description/locobot.urdf'
 CUBE_URDF = 'assets/cube/cube.urdf'
-FP_CAM_IDX = 1
+# FP_CAM_IDX = 0
 # NUM_EXPLORATION_IMAGES = 2
 IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
 
@@ -71,14 +71,15 @@ class Environment(gym.Env):
         # self.n_substeps = n_substesps
         # self.pb_client.setAdditionalSearchPath(locobot.LIB_PATH.joinpath('assets').as_posix())
 
-        self.pix_size = 0.003125
+        self.pix_size = PIXEL_SIZE
         self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
         # self.homej = np.array([-1, -0.5, 0.5, -0.5, -0.5, 0]) * np.pi
         self.workspace_height = 0.165
 
-        self.agent_cams = cameras.RealSenseD415.CONFIG[1:2]
-        # repeat the last comfig until we add a locobot.
-        self.agent_cams.append(self.agent_cams[-1])
+        # self.agent_cams = cameras.RealSenseD415.CONFIG[1:2]
+        # # repeat the last comfig until we add a locobot.
+        # self.agent_cams.append(self.agent_cams[-1])
+        self.agent_cams = [None]
         self.record_cfg = record_cfg
         self.save_video = False
         self.step_counter = 0
@@ -88,11 +89,11 @@ class Environment(gym.Env):
         self.num_turns = 2
 
         color_tuple = [
-            gym.spaces.Box(0, 255, config['image_size'] + (3,), dtype=np.uint8)
+            gym.spaces.Box(0, 255, (480, 640) + (3,), dtype=np.uint8)
             for config in self.agent_cams
         ]
         depth_tuple = [
-            gym.spaces.Box(0.0, 20.0, config['image_size'], dtype=np.float32)
+            gym.spaces.Box(0.0, 20.0, (480, 640), dtype=np.float32)
             for config in self.agent_cams
         ]
         self.observation_space = gym.spaces.Dict({
@@ -668,26 +669,47 @@ class Environment(gym.Env):
 
     def motion_planner(self, target_pos, tol_dist=0.52, tol_angle=np.pi/6):
 
-        target_idx= None
-        for id, pt in enumerate(self.ws_edgepts[0]):
-            # print(id, pt)
-            d = np.linalg.norm(np.array(pt) - target_pos)
-            # print(f'Distance of {target_pos} from {id} ({pt}): {d}, ')
-            if d < tol_dist:
-                target_idx = id
-                # print(f'Target index: {target_idx}')
-                break
-        # assert False
-        if target_idx is None:
-            import pdb; pdb.set_trace()
-            raise RuntimeError(f'No edgepoint is within {tol_dist} of edgepoints.')
+        # target_idx= None
+        # for id, pt in enumerate(self.ws_edgepts[0]):
+        #     # print(id, pt)
+        #     d = np.linalg.norm(np.array(pt) - target_pos)
+        #     # print(f'Distance of {target_pos} from {id} ({pt}): {d}, ')
+        #     if d < tol_dist:
+        #         target_idx = id
+        #         # print(f'Target index: {target_idx}')
+        #         break
+        # # assert False
+        # if target_idx is None:
+        #     import pdb; pdb.set_trace()
+        #     raise RuntimeError(f'No edgepoint is within {tol_dist} of edgepoints.')
 
         success = self.movej(p='home')
         self.locobot.set_locobot_camera_pan_tilt(0, 0.6)
 
         # print(f'Setting pose to homej: {success}')
         # success &= _move(pt1_idx, target_idx, target_pos)
-        edge_pt = np.array(self.ws_edgepts[0][target_idx])
+        margin = 0.25
+        d_left = target_pos[1] - (-0.5)
+        d_right = target_pos[1] - (0.5)
+        d_top = target_pos[0] - (0.75)
+        d_down = target_pos[0] - (0.25)
+        edge = np.argmin(np.abs([d_left, d_right, d_top, d_down]))
+        if edge == 0:
+            x = target_pos[0] + np.random.uniform(-0.07, 0.07)
+            y = -0.5 + np.random.uniform(-0.05, 0) - margin
+        elif edge == 1:
+            x = target_pos[0] + np.random.uniform(-0.07, 0.07)
+            y = 0.5 + np.random.uniform(0, 0.05) + margin
+        elif edge == 2:
+            y = target_pos[1] + np.random.uniform(-0.07, 0.07)
+            x = 0.75 + np.random.uniform(0, 0.05) + margin
+        elif edge == 3:
+            y = target_pos[1] + np.random.uniform(-0.07, 0.07)
+            x = 0.25 + np.random.uniform(-0.05, 0) - margin
+        else:
+            assert False
+
+        edge_pt = np.array([x, y])
         dx, dy = np.array(target_pos) - np.array(edge_pt)
 
         eps = min(max(tol_angle*np.random.normal(), -tol_angle), tol_angle)

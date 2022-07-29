@@ -19,40 +19,40 @@ import cv2
 @hydra.main(config_path="./cfg", config_name='train')
 def main(cfg):
     # Logger
-    wandb_logger = WandbLogger(name=cfg['tag']) if cfg['train']['log'] else None
+    # wandb_logger = WandbLogger(name=cfg['tag']) if cfg['train']['log'] else None
+    #
+    # # Checkpoint saver
+    # hydra_dir = Path(os.getcwd())
+    # checkpoint_path = os.path.join(cfg['train']['train_dir'], 'checkpoints')
+    # last_checkpoint_path = os.path.join(checkpoint_path, 'last.ckpt')
+    # last_checkpoint = last_checkpoint_path if os.path.exists(last_checkpoint_path) and cfg['train']['load_from_last_ckpt'] else None
+    # checkpoint_callback = ModelCheckpoint(
+    #     monitor=cfg['wandb']['saver']['monitor'],
+    #     filepath=os.path.join(checkpoint_path, 'best'),
+    #     save_top_k=1,
+    #     save_last=True,
+    # )
 
-    # Checkpoint saver
-    hydra_dir = Path(os.getcwd())
-    checkpoint_path = os.path.join(cfg['train']['train_dir'], 'checkpoints')
-    last_checkpoint_path = os.path.join(checkpoint_path, 'last.ckpt')
-    last_checkpoint = last_checkpoint_path if os.path.exists(last_checkpoint_path) and cfg['train']['load_from_last_ckpt'] else None
-    checkpoint_callback = ModelCheckpoint(
-        monitor=cfg['wandb']['saver']['monitor'],
-        filepath=os.path.join(checkpoint_path, 'best'),
-        save_top_k=1,
-        save_last=True,
-    )
-
-    # Trainer
-    max_epochs = cfg['train']['n_steps'] // cfg['train']['n_demos']
-    trainer = Trainer(
-        gpus=cfg['train']['gpu'],
-        fast_dev_run=cfg['debug'],
-        logger=wandb_logger,
-        checkpoint_callback=checkpoint_callback,
-        max_epochs=max_epochs,
-        automatic_optimization=False,
-        check_val_every_n_epoch=max_epochs // 50,
-        resume_from_checkpoint=last_checkpoint,
-    )
-
-    # Resume epoch and global_steps
-    if last_checkpoint:
-        print(f"Resuming: {last_checkpoint}")
-        last_ckpt = torch.load(last_checkpoint)
-        trainer.current_epoch = last_ckpt['epoch']
-        trainer.global_step = last_ckpt['global_step']
-        del last_ckpt
+    # # Trainer
+    # max_epochs = cfg['train']['n_steps'] // cfg['train']['n_demos']
+    # trainer = Trainer(
+    #     gpus=cfg['train']['gpu'],
+    #     fast_dev_run=cfg['debug'],
+    #     logger=wandb_logger,
+    #     checkpoint_callback=checkpoint_callback,
+    #     max_epochs=max_epochs,
+    #     automatic_optimization=False,
+    #     check_val_every_n_epoch=max_epochs // 50,
+    #     resume_from_checkpoint=last_checkpoint,
+    # )
+    #
+    # # Resume epoch and global_steps
+    # if last_checkpoint:
+    #     print(f"Resuming: {last_checkpoint}")
+    #     last_ckpt = torch.load(last_checkpoint)
+    #     trainer.current_epoch = last_ckpt['epoch']
+    #     trainer.global_step = last_ckpt['global_step']
+    #     del last_ckpt
 
     # Config
     data_dir = cfg['train']['data_dir']
@@ -72,7 +72,6 @@ def main(cfg):
 
     # test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=num_cpus, shuffle = False)
 
-    agent = agents.names[agent_type](name, cfg, train_ds, val_ds)
 
     train_loader = DataLoader(train_ds, batch_size=32,
                                 # num_workers=cfg['train']['num_cpus'],
@@ -82,18 +81,19 @@ def main(cfg):
                                 shuffle = False)
 
     print(f'Train loader length: {len(train_loader)}')
-    for idx, batch_data in enumerate(train_loader):
-        sample, goal = batch_data
-        # pdb.set_trace()
-        agent.training_step(batch_data, idx)
-        # print('Okay loading dataloader, length of batch', sample[0][0].shape)
-
-    # trainer.fit(agent)
-
 
     print(f'Length of dataset: {len(train_ds)}')
     print(f'steps description: {train_ds.idx_to_episode_step}')
     print(f'Numsteps: {train_ds.episode_num_steps}')
+
+    # #
+    # agent = agents.names[agent_type](name, cfg)
+    # for idx, batch_data in enumerate(train_loader):
+    #     sample, goal = batch_data
+    #     agent.training_step(batch_data, idx)
+
+
+
 
     i = random.choice(range(len(train_ds)))
     sample, goal = train_ds[i]
