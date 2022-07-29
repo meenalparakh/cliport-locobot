@@ -445,10 +445,10 @@ class RavensDataset(Dataset):
             if within_image_bounds(p):
                 r, c = p
             else:
-#                 print('Warning: Pick point not in the image.')
-#                 print(f'Image shape: {img[i].shape}')
-#                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_pick.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
-#                 assert False
+                print('Warning: Pick point not in the image.')
+                print(f'Image shape: {img[i].shape}')
+                plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_pick.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
+                assert False
                 r = max(min(p[0], img_dims[0]), 0)
                 c = max(min(p[1], img_dims[1]), 0)
                 # labels[i, r, c] = 1.0
@@ -466,11 +466,11 @@ class RavensDataset(Dataset):
             if within_image_bounds(p):
                 r, c = p
             else:
-#                 print('Warning: Place point not in the image.')
-#                 print(f'Image shape: {img[i].shape}')
+                print('Warning: Place point not in the image.')
+                print(f'Image shape: {img[i].shape}')
 
-#                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_place.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
-#                 assert False
+                plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_place.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
+                assert False
                 r = max(min(p[0], img_dims[0]), 0)
                 c = max(min(p[1], img_dims[1]), 0)
                 # labels[i, r, c] = 1.0

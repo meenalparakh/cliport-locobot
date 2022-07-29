@@ -651,7 +651,7 @@ class Environment(gym.Env):
 
         ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
         self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
-        self.locobot.set_locobot_camera_pan_tilt(-np.pi/6, 0.6)
+        self.locobot.set_locobot_camera_pan_tilt(-np.pi/5, 0.6)
 
         for i in range(10):
             self.step_simulation()
@@ -659,7 +659,7 @@ class Environment(gym.Env):
 
         # ori = self.pb_client.getQuaternionFromEuler([0, 0, theta+np.pi/6])
         # self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
-        self.locobot.set_locobot_camera_pan_tilt(np.pi/6, 0.6)
+        self.locobot.set_locobot_camera_pan_tilt(np.pi/5, 0.6)
         for i in range(10):
             self.step_simulation()
         obs.append(self.get_obs_wrapper())
