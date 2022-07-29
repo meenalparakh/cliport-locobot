@@ -22,7 +22,7 @@ train:
   data_dir: ${root_dir}/data
 
   # task configs
-  task: packing-boxes-pairs-seen-colors
+  task: 'put-block-in-container-seen-colors'
   # agent: two_stream_full_clip_lingunet_lat_transporter
   agent: 'locobot'
   n_demos: 1000
@@ -40,7 +40,7 @@ train:
   lang_fusion_type: 'mult'
 
   # script configs
-  gpu: [0] # -1 for all
+  gpu: 0 # -1 for all
   num_cpus: 8
   log: False # log metrics and stats to wandb
   n_val: 100

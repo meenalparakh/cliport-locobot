@@ -135,7 +135,7 @@ class LocobotTransporterAgent(LightningModule):
 
         total_loss = loss0 + loss1 + loss2 + loss3
         self.log('train_loss', total_loss)
-        print('One training step ended')
+        print(f'Train batch loss: {total_loss}')
         return total_loss
 
     def validation_step(self, batch, batch_idx):
@@ -164,4 +164,5 @@ class LocobotTransporterAgent(LightningModule):
 
         total_loss = loss0 + loss1 + loss2 + loss3
         self.log('val_loss', total_loss)
+        print(f'Val batch loss: {total_loss}')
         return total_loss

@@ -428,9 +428,6 @@ class RavensDataset(Dataset):
                 return True
             return False
 
-        def get_crop(img, pixel, crop_size):
-            return crop
-
         img, (p0, p0_theta), (p1, p1_theta), _ = input_sample
         for substep in range(len(img)):
             img[substep][:,:,:3] = img[substep][:,:,:3]/255.0
@@ -478,8 +475,6 @@ class RavensDataset(Dataset):
                     d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
                     labels[i, row, col] = np.exp(-d_sq)
             labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
-
-        crop = get_crop(img[3], p0, self.crop_size)
 
         # img = img.permute(2, 0, 1)
         return img, labels, crops, (p0, p0_theta, p1, p1_theta)

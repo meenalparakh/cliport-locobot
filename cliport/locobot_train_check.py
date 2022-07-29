@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 import hydra
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.loggers import WandbLogger, CSVLogger
+
 import pdb
 import random
 import cv2
@@ -61,16 +62,34 @@ def main(cfg):
     agent = agents.names[agent_type](name, cfg)
     agent.apply(initialize_weights)
 
-    agent.train()
-    for epoch in range(cfg['train']['max_epochs']):
-        losses = []
-        for idx, batch in enumerate(train_loader):
-            agent._optimizers.zero_grad()
-            loss = agent.training_step(batch, idx)
-            loss.backward()
-            agent._optimizers.step()
-            losses.append(loss.item())
-        print(f'Epoch: {epoch}, Loss: {np.mean(loss)}')
+    logs_dir = name
+    print(f'Log dir: {name}')
+    logger = CSVLogger("CSV logs", name=logs_dir)
+    print('logger initialized!.')
+
+    max_epochs = cfg['train']['max_epochs']
+    trainer = Trainer(logger=logger,
+                    accelerator='cpu',
+                     devices=cfg['train']['gpu'],
+                      precision=16,
+                     # check_val_every_n_epoch=val_every_n_epochs,
+                      max_epochs=cfg['train']['max_epochs'])
+
+    print('Starting fitting')
+
+    trainer.fit(agent, train_loader, val_loader)
+    print('done')
+    # agent.train()
+    # for epoch in range(cfg['train']['max_epochs']):
+    #     losses = []
+    #     for idx, batch in enumerate(train_loader):
+    #
+    #         agent._optimizers.zero_grad()
+    #         loss = agent.training_step(batch, idx)
+    #         loss.backward()
+    #         agent._optimizers.step()
+    #         losses.append(loss.item())
+    #     print(f'Epoch: {epoch}, Loss: {np.mean(loss)}')
 
 
     # pdb.set_trace()

@@ -92,13 +92,7 @@ def main(cfg):
 
     print('Starting fitting')
 
-    # print(f'Num samples: {trainer.num_training_samples}')
-
     trainer.fit(agent, train_loader, val_loader)
-    # print(f'Num samples: {trainer.num_training_samples}')
-
-    # for idx, batch in enumerate(train_loader):
-    #     agent.training_step(batch, idx)
     print('done')
 
     # pdb.set_trace()
