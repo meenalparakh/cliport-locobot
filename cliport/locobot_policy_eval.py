@@ -4,22 +4,27 @@ import os
 import hydra
 import numpy as np
 import random
-
+import cv2
 from cliport import tasks
 from cliport.dataset import RavensDataset, FOLDER_PREFIX
 from cliport.environments.environment import Environment
 import pdb
 import glob
+from cliport import agents
+
 from cliport.utils.multiprocessing_utils import UptownFunc
+from cliport.utils import utils
 from copy import copy
 import pickle
 from multiprocessing import cpu_count
 import time
 from cliport.dataset import BOUNDS, FP_CAM_IDX, PIXEL_SIZE, IMG_SHAPE
+import torch 
+import matplotlib.pyplot as plt
 
 # os.environ['NUMEXPR_MAX_THREADS'] = '96'
 
-def get_pose_from_pixel(p, bot_pose):
+def get_pose_from_pixel(env, p, bot_pose):
     x, y, z = utils.pix_to_xyz(p, 0.2, BOUNDS, PIXEL_SIZE, skip_height=True)
     z = 0.2
     X_WL = utils.get_transformation_matrix(bot_pose)
@@ -29,14 +34,22 @@ def get_pose_from_pixel(p, bot_pose):
     pose = (p_W[:3,0], pickplace_ori)
     return pose
 
-def save_labelled_img(img, p, location, margin=5):
-    height, width = img.shape[:2]
+def save_labelled_img(img, prob_map, p, dir_path, fname, margin=5):
+    original_img = img.permute(1, 2, 0)
+    height, width = original_img.shape[:2]
     d0 = max(0, p[1] - margin), max(0, p[0] - margin)
     d0_ = min(width, p[1] + margin), min(height, p[0] + margin)
-    color = img[:,:,:3]
+
+    color = np.rint(original_img[:,:,:3].detach().cpu().numpy()*255)
+    prob_map = prob_map.detach().cpu().numpy()
+    
+#     print("Color image shape:", color.shape)
+#     print("Prob map shape:", prob_map.shape)
+
     cv2.rectangle(color, d0, d0_, (255, 0, 0), 1)
     color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(location, color)
+    cv2.imwrite(os.path.join(dir_path, fname+'_color.jpeg'), color)
+    plt.imsave(os.path.join(dir_path, fname+'_prob_map.jpeg'), prob_map)
 
 def get_image(obs, cam_config):
     """Stack color and height images image."""
@@ -52,13 +65,14 @@ def get_image(obs, cam_config):
     assert img.shape == IMG_SHAPE, img.shape
     return img
 
-def preprocess_image(img):
+def preprocess_image(img, device='cuda'):
     img[:,:,:3] = img[:,:,:3]/255.0
     img = torch.tensor(img).float().permute(2, 0, 1)
     img = img[None, ...]
+    img = img.to(device)
     return img
 
-def get_image_wrapper(self, obs):
+def get_image_wrapper(obs):
     """Stack color and height images image."""
     # print('Info:', obs[substep]['configs'][0]['position'])
     cam_configs = []
@@ -83,33 +97,38 @@ def get_image_wrapper(self, obs):
         cam_configs.append(config)
 
     substep_obs = {'color': substep_colors, 'depth': substep_depths}
-    img = self.get_image(substep_obs, cam_configs)
+    img = get_image(substep_obs, cam_configs)
     return img
 
-def act_pick(obs, agent, save_location=None):
-    img = preprocess_image(get_image_wrapper(obs))
-    prob_map = agent.attention_layers(img)[0].cpu().numpy()
-    p = np.unravel_index(torch.argmax(prob_map), prob_map.shape)
+def act_pick(env, obs, agent, save_dir=None, fname=None, device='cuda'):
+    img = preprocess_image(get_image_wrapper(obs), device=device)
+    prob_map = agent.attention_layers(img)[0]
+    prob_map = prob_map[0]
+    
+    p = np.unravel_index(torch.argmax(prob_map).detach().cpu(), prob_map.shape)
     img = img[0]
-    if save_location is not None:
-        save_labelled_img(img, p, save_location, margin=5)
+    if save_dir is not None:
+        save_labelled_img(img, prob_map, p, save_dir, fname, margin=5)
 
-    pick_pose = get_pose_from_pixel(p, obs[-1]['bot_pose'])
+    pick_pose = get_pose_from_pixel(env, p, obs[-1]['bot_pose'])
     return pick_pose
 
-def act_place(obs, agent, save_location=None):
-    img = preprocess_image(get_image_wrapper(obs))
-    prob_map = agent.transport_layers(img)[0].cpu().numpy()
-    p = np.unravel_index(torch.argmax(prob_map), prob_map.shape)
+def act_place(env, obs, agent, save_dir=None, fname=None, device='cuda'):
+    img = preprocess_image(get_image_wrapper(obs), device=device)
+    prob_map = agent.transport_layers(img)[0]
+    prob_map = prob_map[0]
+    
+    p = np.unravel_index(torch.argmax(prob_map).detach().cpu(), prob_map.shape)
     img = img[0]
-    if save_location is not None:
-        save_labelled_img(img, p, save_location, margin=5)
+    if save_dir is not None:
+        save_labelled_img(img, prob_map, p, save_dir, fname, margin=5)
 
-    place_pose = get_pose_from_pixel(p, obs[-1]['bot_pose'])
+    place_pose = get_pose_from_pixel(env, p, obs[-1]['bot_pose'])
     return place_pose
 
-def policy_evalute(cfg, agent, save_traj=True):
+def policy_evalute(cfg):
 
+    device='cuda'
     env = Environment(
         cfg['assets_root'],
         disp=cfg['disp'],
@@ -119,7 +138,15 @@ def policy_evalute(cfg, agent, save_traj=True):
     )
     task = tasks.names[cfg['task']]()
     task.mode = cfg['mode']
-
+    
+    model_ckpt = cfg['eval']['model_ckpt']
+    cfg['name'] = 'eval_agent'
+    agent = agents.names['locobot'](cfg)
+    agent.load_from_checkpoint(model_ckpt)
+    
+    agent.eval()
+    agent = agent.to(device)
+    
     record = cfg['record']['save_video']
     save_data = cfg['save_data']
     # Initialize scripted oracle agent and dataset.
@@ -132,6 +159,7 @@ def policy_evalute(cfg, agent, save_traj=True):
 
     rollout_summary = np.zeros(cfg['n'])
     for rollout_idx in range(cfg['n']):
+        print(f'Rollout: {rollout_idx}')
         episode, total_reward = [], 0
         seed += 2
         np.random.seed(seed)
@@ -149,28 +177,24 @@ def policy_evalute(cfg, agent, save_traj=True):
             # pdb.set_trace()
             obs = obs[-env.num_turns:]
             ####################################################################
-            pick_pose = act_pick(obs, agent,
-                            os.path.join(rollout_dir, f'{step}_explore1.jpeg'))
+            pick_pose = act_pick(env, obs, agent, rollout_dir, f'{step}_explore1', device=device)
             env.motion_planner(pick_pose[0][:2])
             obs = [env.get_obs_wrapper()]
             ####################################################################
-            pick_pose = act_pick(obs, agent,
-                            os.path.join(rollout_dir, f'{step}_pick.jpeg'))
-            env.task.pick(pick_pose)
-            obs = env.turn_around_center(env.table_center))
+            pick_pose = act_pick(env, obs, agent, rollout_dir, f'{step}_pick', device=device)
+            env.task.primitive.pick(env, pick_pose)
+            obs = env.turn_around_center(env.table_center)
             ####################################################################
-            place_pose = act_place(obs, agent,
-                            os.path.join(rollout_dir, f'{step}_explore2.jpeg'))
+            place_pose = act_place(env, obs, agent, rollout_dir, f'{step}_explore2', device=device)
             env.motion_planner(place_pose[0][:2])
             obs = [env.get_obs_wrapper()]
             ####################################################################
-            place_pose = act_pick(obs, agent,
-                            os.path.join(rollout_dir, f'{step}_place.jpeg'))
-            env.task.place(pick_pose)
-            obs = env.turn_around_center(env.table_center))
+            place_pose = act_pick(env, obs, agent, rollout_dir, f'{step}_place', device=device)
+            env.task.primitive.place(env, pick_pose)
+            obs = env.turn_around_center(env.table_center)
 
-            reward, info = self.task.reward()
-            done = self.task.done()
+            reward, info = env.task.reward()
+            done = env.task.done()
             # is_done = check_completion_oracle()
             if done:
                 rollout_summary[rollout_idx] = 1
@@ -178,6 +202,7 @@ def policy_evalute(cfg, agent, save_traj=True):
 
     fname = os.path.join(data_path, 'summary.pkl')
     np.savetxt(fname, rollout_summary)
+    print('Success rate:', np.sum(rollout_summary)/cfg['n'])
     return np.sum(rollout_summary), cfg['n']
 
 @hydra.main(config_path='./cfg', config_name='data')
@@ -191,6 +216,8 @@ def main(cfg):
 
     run = 0
     seed = int(time.time())
+    
+    cfg['mode']='eval'
 
     if not cfg['multiprocessing']:
         if not cfg['run_specified']:
@@ -217,29 +244,26 @@ def main(cfg):
 
         P = UptownFunc()
         P.parallelise_function(arguments, collect_data)
-        # num_trajs_tried = 0
-        # for result in results:
-        #     num_trajs_tried_ = result
-        #     num_trajs_tried += num_trajs_tried_
 
-    num_success, num_tried = 0, 0
-    for fname in os.listdir(data_path):
-        if 'info' in fname:
-            n1, n2 = pickle.load(open(os.path.join(data_path, fname), 'rb'))
-            num_success += n1
-            num_tried += n2
 
-    print(f'Total successful episodes: {num_success}')
-    print(f'Total episodes tried: {num_tried}')
-    print(f'Success rate (upper bound): {num_success/num_tried}')
+#     num_success, num_tried = 0, 0
+#     for fname in os.listdir(data_path):
+#         if 'info' in fname:
+#             n1, n2 = pickle.load(open(os.path.join(data_path, fname), 'rb'))
+#             num_success += n1
+#             num_tried += n2
 
-        # if args.remove_old:
-    for fname in os.listdir(data_path):
-        if 'info' in fname:
-            # print(fname)
-            os.remove(os.path.join(data_path, fname))
-    with open(os.path.join(data_path, 'info_.pkl'), 'wb') as f:
-        pickle.dump([num_success, num_tried], f)
+#     print(f'Total successful episodes: {num_success}')
+#     print(f'Total episodes tried: {num_tried}')
+#     print(f'Success rate (upper bound): {num_success/num_tried}')
+
+#         # if args.remove_old:
+#     for fname in os.listdir(data_path):
+#         if 'info' in fname:
+#             # print(fname)
+#             os.remove(os.path.join(data_path, fname))
+#     with open(os.path.join(data_path, 'info_.pkl'), 'wb') as f:
+#         pickle.dump([num_success, num_tried], f)
 
     ## check if directory exists, if not create one
 

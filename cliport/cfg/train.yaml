@@ -1,5 +1,7 @@
 # Training
 
+name: None
+
 defaults:
   - config
 
@@ -47,6 +49,7 @@ train:
   val_repeats: 1
   save_steps: [1000, 2000, 3000, 4000, 5000, 7000, 10000, 20000, 40000, 80000, 120000, 160000, 200000, 300000, 400000, 500000, 600000, 800000, 1000000, 1200000]
   load_from_last_ckpt: True
+  ckpt_path: 'None'
 
 wandb:
   run_name: 'cliport0'

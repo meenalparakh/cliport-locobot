@@ -58,12 +58,12 @@ def get_renset_layers(input_dim, output_dim, batchnorm):
         return out
 
 class LocobotTransporterAgent(LightningModule):
-    def __init__(self, name, cfg): #lr, weight_decay, weights = None):
+    def __init__(self, cfg): #lr, weight_decay, weights = None):
         super().__init__()
+        self.save_hyperparameters(cfg)
 
-        self.name = name
+        self.name = cfg['name']
         self.cfg = cfg
-        self.name = name
         self.task = cfg['train']['task']
 
         self.pix_size = PIXEL_SIZE
@@ -136,7 +136,7 @@ class LocobotTransporterAgent(LightningModule):
         total_loss = loss0 + loss1 + loss2 + loss3
         self.log('train_loss', total_loss)
 #         print(f'Train batch loss: {total_loss}')
-        return total_loss
+        return total_loss*1000
 
     def validation_step(self, batch, batch_idx):
         # return 1.0
@@ -165,4 +165,32 @@ class LocobotTransporterAgent(LightningModule):
         total_loss = loss0 + loss1 + loss2 + loss3
         self.log('val_loss', total_loss)
 #         print(f'Val batch loss: {total_loss}')
-        return total_loss
+        return total_loss*1000
+
+    def test_step(self, batch, batch_idx):
+        # return 1.0
+        sample, _ = batch
+        imgs, labels, crops, values = sample
+        place_thetas = values[-1]
+#         assert(len(imgs) == 4)
+        explore_img_1 = imgs[0]
+        explore_img_1_label = labels[:, 0]
+        pick_img = imgs[1]
+        pick_img_label = labels[:, 1]
+
+        loss0 = self.attn_training_step(explore_img_1, explore_img_1_label)
+        loss1 = self.attn_training_step(pick_img, pick_img_label)
+
+        explore_img_2 = imgs[2]
+        explore_img_2_label = labels[:, 2]
+        place_img = imgs[3]
+        place_img_label = labels[:, 3]
+        loss2 = self.transport_training_step(explore_img_2, crops,
+                                        explore_img_2_label, place_thetas[2])
+        loss3 = self.transport_training_step(place_img, crops,
+                                        place_img_label, place_thetas[3])
+
+        total_loss = loss0 + loss1 + loss2 + loss3
+        self.log('test_loss', total_loss)
+#         print(f'Val batch loss: {total_loss}')
+        return total_loss*1000
