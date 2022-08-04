@@ -12,13 +12,14 @@ class LocobotPickPlace():
     def __call__(self, env, action):
      # movej, movep, ee, center, pose0, pose1,
      #             navigator, obs_info_fn, turn_fn):]
+        center = [0.5, 0.0]
         substep_obs = []
         pick_pose, place_pose = action['pose0'], action['pose1']
-        center = action['center']
+
         env.motion_planner(pick_pose[0][:2])
         substep_obs.append(env.get_obs_wrapper())
 
-        self.pick(env, pick_pose)
+        pick_success = self.pick(env, pick_pose)
         substep_obs.extend(env.turn_around_center(env.table_center))
 
         if pick_success:
@@ -33,7 +34,7 @@ class LocobotPickPlace():
         # Move to prepick pose if pick is not successful.
         else:
             env.ee.release()
-            env.movep(prepick_pose)
+            env.movej(p='action')
             env.movej(p='home')
             env.turn_to_point(center[:2], tol=np.pi/18)
             success = False

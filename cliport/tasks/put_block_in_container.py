@@ -31,6 +31,8 @@ class PutBlockInContainerUnseenColors(Task):
         # Add container box.
         zone_size = self.get_random_size(0.05, 0.3, 0.05, 0.3, 0.05, 0.05)
         zone_pose = self.get_random_pose(env, zone_size)
+        
+        container_id = []
         if fixed:
             zone_size = (0.18, 0.18, 0.05)
             pos = (0.35, -0.4, zone_pose[0][2])
@@ -41,7 +43,7 @@ class PutBlockInContainerUnseenColors(Task):
         half = np.float32(zone_size) / 2
         replace = {'DIM': zone_size, 'HALF': half}
         container_urdf = self.fill_template(container_template, replace)
-        env.add_object(container_urdf, zone_pose, 'fixed')
+        container_id.append(env.add_object(container_urdf, zone_pose, 'fixed'))
         if os.path.exists(container_urdf):
             os.remove(container_urdf)
 

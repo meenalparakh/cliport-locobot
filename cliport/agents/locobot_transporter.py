@@ -12,6 +12,22 @@ from cliport.models.resnet import IdentityBlock, ConvBlock
 from cliport.dataset import BOUNDS, PIXEL_SIZE, IMG_SHAPE
 
 
+# class LinearNetwork(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.layers = nn.Sequential(
+#             nn.Linear(192*192, 32),
+#             nn.ReLU(),
+#             nn.Linear(32, 192*192)
+#             )
+        
+#     def forward(self, img):
+#         batch_size = img.shape[0]
+#         img = img[:,0,:,:].reshape((batch_size, -1))
+#         out = self.layers(img)
+#         out = out.reshape((batch_size, 192, 192))
+#         return out
+
 def get_renset_layers(input_dim, output_dim, batchnorm):
     layers = nn.Sequential(
         # conv1
@@ -53,9 +69,9 @@ def get_renset_layers(input_dim, output_dim, batchnorm):
     )
     return layers
 
-    def forward(self, x):
-        out = self.layers(x)
-        return out
+#     def forward(self, x):
+#         out = self.layers(x)
+#         return out
 
 class LocobotTransporterAgent(LightningModule):
     def __init__(self, cfg): #lr, weight_decay, weights = None):
@@ -76,8 +92,16 @@ class LocobotTransporterAgent(LightningModule):
         self.attention_layers = get_renset_layers(4, 1, batchnorm)
         self.transport_layers = get_renset_layers(4, 1, batchnorm)
 
-        self._optimizers = torch.optim.Adam(self.parameters(),
+        self.attn_optimizer = torch.optim.Adam(self.attention_layers.parameters(),
                                              lr=self.cfg['train']['lr'])
+        self.transport_optimizer = torch.optim.Adam(self.transport_layers.parameters(),
+                                             lr=self.cfg['train']['lr'])
+        
+        self.attn_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.attn_optimizer, gamma=0.9)
+        self.transport_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.transport_optimizer, gamma=0.9)
+        
+        self._optimizers = [self.attn_optimizer, self.transport_optimizer]
+        self._schedulers = [self.attn_scheduler, self.transport_scheduler]
 
     def attn_forward(self, inp_img):
         return self.attention_layers(inp_img)
@@ -86,19 +110,28 @@ class LocobotTransporterAgent(LightningModule):
         return self.transport_layers(inp_img)
 
     def configure_optimizers(self):
-        return [self._optimizers]
+        return self._optimizers #, self._schedulers[:1]
 
-    def cross_entropy_with_logits(self, pred, labels, reduction='mean'):
+    def cross_entropy_with_logits(self, pred, labels):
+    
         # Lucas found that both sum and mean work equally well
         batch_size = pred.shape[0]
+        
+#         for i in range(batch_size):
+#             p_true = np.unravel_index(torch.argmax(labels[i]).detach().cpu(), labels[i].shape)            
+#             p = np.unravel_index(torch.argmax(pred[i][0]).detach().cpu(), labels[i].shape)
+#             print('pixel true, pred:', p_true, p)
+            
         pred = pred.reshape((batch_size, -1))
-#         print("prediction shape after flattening:", pred.shape)
         labels = labels.reshape((batch_size, -1))
-        log_prob = F.log_softmax(pred, -1)
+        
+        assert(int(labels.sum()) == batch_size)
+        log_prob = F.log_softmax(pred, dim=1)
         x = -(labels * log_prob)
-        return x.mean()
+        return x.sum()/batch_size
 
     def attn_training_step(self, img, label):
+#         print('attn training', img.shape)
         out = self.attn_forward(img)
         loss = self.cross_entropy_with_logits(out, label)
         return loss
@@ -108,43 +141,48 @@ class LocobotTransporterAgent(LightningModule):
         loss = self.cross_entropy_with_logits(out, label)
         return loss
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx, optimizer_idx):
         sample, _ = batch
         imgs, labels, crops, values = sample
         place_thetas = values[-1]
+        
         # Get training losses.
         # step = self.total_steps + 1
         assert(len(imgs) == 4)
-        # if optimizer_idx == 0:
-        explore_img_1 = imgs[0]
-        explore_img_1_label = labels[:, 0]
-        pick_img = imgs[1]
-        pick_img_label = labels[:, 1]
+        if optimizer_idx == 0:
+            explore_img_1 = imgs[0]
+            explore_img_1_label = labels[:, 0]
+            pick_img = imgs[1]
+            pick_img_label = labels[:, 1]
 
-        loss0 = self.attn_training_step(explore_img_1, explore_img_1_label)
-        loss1 = self.attn_training_step(pick_img, pick_img_label)
+            loss0 = self.attn_training_step(explore_img_1, explore_img_1_label)
+            loss1 = self.attn_training_step(pick_img, pick_img_label)
 
-        explore_img_2 = imgs[2]
-        explore_img_2_label = labels[:, 2]
-        place_img = imgs[3]
-        place_img_label = labels[:, 3]
-        loss2 = self.transport_training_step(explore_img_2, crops,
-                                        explore_img_2_label, place_thetas[2])
-        loss3 = self.transport_training_step(place_img, crops,
-                                        place_img_label, place_thetas[3])
+            attn_loss = loss0 + loss1
+            self.log('attn_loss', attn_loss)
+            return attn_loss
+        
+        else:
+            explore_img_2 = imgs[2]
+            explore_img_2_label = labels[:, 2]
+            place_img = imgs[3]
+            place_img_label = labels[:, 3]
+            loss2 = self.transport_training_step(explore_img_2, crops,
+                                            explore_img_2_label, place_thetas[2])
+            loss3 = self.transport_training_step(place_img, crops,
+                                            place_img_label, place_thetas[3])
 
-        total_loss = loss0 + loss1 + loss2 + loss3
-        self.log('train_loss', total_loss)
-#         print(f'Train batch loss: {total_loss}')
-        return total_loss*1000
+            transport_loss = loss2 + loss3
+            self.log('transport_loss', transport_loss)
+            return transport_loss
 
-    def validation_step(self, batch, batch_idx):
-        # return 1.0
+    def validation_step(self, batch, batch_idx): 
         sample, _ = batch
         imgs, labels, crops, values = sample
         place_thetas = values[-1]
-
+        
         assert(len(imgs) == 4)
+        
         explore_img_1 = imgs[0]
         explore_img_1_label = labels[:, 0]
         pick_img = imgs[1]
@@ -153,6 +191,9 @@ class LocobotTransporterAgent(LightningModule):
         loss0 = self.attn_training_step(explore_img_1, explore_img_1_label)
         loss1 = self.attn_training_step(pick_img, pick_img_label)
 
+        attn_loss = loss0 + loss1
+        self.log('attn_val_loss', attn_loss)
+        
         explore_img_2 = imgs[2]
         explore_img_2_label = labels[:, 2]
         place_img = imgs[3]
@@ -162,17 +203,16 @@ class LocobotTransporterAgent(LightningModule):
         loss3 = self.transport_training_step(place_img, crops,
                                         place_img_label, place_thetas[3])
 
-        total_loss = loss0 + loss1 + loss2 + loss3
-        self.log('val_loss', total_loss)
-#         print(f'Val batch loss: {total_loss}')
-        return total_loss*1000
+        transport_loss = loss2 + loss3
+        self.log('transport_val_loss', transport_loss)
+            
+#         return attn_loss + transport_loss
 
     def test_step(self, batch, batch_idx):
-        # return 1.0
         sample, _ = batch
         imgs, labels, crops, values = sample
         place_thetas = values[-1]
-#         assert(len(imgs) == 4)
+                
         explore_img_1 = imgs[0]
         explore_img_1_label = labels[:, 0]
         pick_img = imgs[1]
@@ -181,6 +221,9 @@ class LocobotTransporterAgent(LightningModule):
         loss0 = self.attn_training_step(explore_img_1, explore_img_1_label)
         loss1 = self.attn_training_step(pick_img, pick_img_label)
 
+        attn_loss = loss0 + loss1
+        self.log('attn_test_loss', attn_loss)
+        
         explore_img_2 = imgs[2]
         explore_img_2_label = labels[:, 2]
         place_img = imgs[3]
@@ -190,7 +233,6 @@ class LocobotTransporterAgent(LightningModule):
         loss3 = self.transport_training_step(place_img, crops,
                                         place_img_label, place_thetas[3])
 
-        total_loss = loss0 + loss1 + loss2 + loss3
-        self.log('test_loss', total_loss)
-#         print(f'Val batch loss: {total_loss}')
-        return total_loss*1000
+        transport_loss = loss2 + loss3
+        self.log('transport_test_loss', transport_loss)
+#         return attn_loss + transport_loss

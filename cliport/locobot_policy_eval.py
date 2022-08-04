@@ -8,6 +8,8 @@ import cv2
 from cliport import tasks
 from cliport.dataset import RavensDataset, FOLDER_PREFIX
 from cliport.environments.environment import Environment
+from torch.utils.data import DataLoader
+
 import pdb
 import glob
 from cliport import agents
@@ -21,9 +23,73 @@ import time
 from cliport.dataset import BOUNDS, FP_CAM_IDX, PIXEL_SIZE, IMG_SHAPE
 import torch 
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 # os.environ['NUMEXPR_MAX_THREADS'] = '96'
 
+def get_p_from_logits(logits):
+    prob = torch.exp(logits[0])
+    prob = prob/torch.sum(prob)
+    p = np.unravel_index(torch.argmax(prob).detach().cpu(), prob.shape)
+    prob = prob.detach().cpu().numpy()
+    return p, prob
+
+def get_bounding_box(p, width, height, margin):
+    d0 = max(0, p[1] - margin), max(0, p[0] - margin)
+    d0_ = min(width, p[1] + margin), min(height, p[0] + margin)
+    return d0, d0_
+
+def eval_training_data(agent, batch, batch_idx, epoch, save_dir=None, device='cuda'):
+    sample, _ = batch
+    imgs, labels, crops, values = sample
+    batch_size = imgs[0].shape[0]
+    margin=5
+#     print(f'Batch size: {batch_size}')
+
+    assert(len(imgs) == 4)
+
+    explore_img_1 = imgs[0]
+    explore_img_1_label = labels[:, 0].reshape((batch_size, -1)).to(device)
+#     print('explore label shape sum', explore_img_1_label.shape, explore_img_1_label.sum())
+    
+    pick_img = imgs[1]
+    pick_img_label = labels[:, 1].reshape((batch_size, -1)).to(device)
+    
+    explore_preds = agent.attn_forward(explore_img_1.to(device))
+    pick_preds = agent.attn_forward(pick_img.to(device))
+    
+    cross_entropy_1 = -explore_img_1_label*F.log_softmax(explore_preds.reshape((batch_size, -1)), dim=1)
+    print(f'Batch: {batch_idx}, Loss: {cross_entropy_1.sum()/batch_size}')
+    
+    for idx in range(batch_size):
+        
+        true_label = explore_img_1_label[idx].reshape((192, 192)).cpu()
+#         print('true label shape, sum', true_label.shape, true_label.sum())
+        true_p = np.unravel_index(torch.argmax(true_label), true_label.shape)
+        true_label = true_label.cpu().numpy()
+           
+        logits = explore_preds[idx]
+#         print('Logits shape', logits.shape)
+        p, prob = get_p_from_logits(logits)
+        print('Data idx:', idx, 'ps:', true_p, p)
+
+        img = explore_img_1[idx].permute(1, 2, 0)[:,:,:3]
+        img = np.rint(img.detach().cpu().numpy()*255)
+        img = img.astype('uint8').copy()
+        height, width = img.shape[:2]
+        
+        d0, d0_ = get_bounding_box(p, width, height, margin)
+        d0_true, d0_true_ = get_bounding_box(true_p, width, height, margin)
+     
+        cv2.rectangle(img, d0, d0_, (255, 0, 0), 1)
+        cv2.rectangle(img, d0_true, d0_true_, (0, 255, 0), 1)
+        
+        fname = f'{epoch}_{batch_idx}_{idx}'
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(os.path.join(save_dir, fname+'_color.jpeg'), img)
+        plt.imsave(os.path.join(save_dir, fname+'_prob_map.jpeg'), prob)
+        plt.imsave(os.path.join(save_dir, fname+'_true_prob_map.jpeg'), true_label)    
+    
 def get_pose_from_pixel(env, p, bot_pose):
     x, y, z = utils.pix_to_xyz(p, 0.2, BOUNDS, PIXEL_SIZE, skip_height=True)
     z = 0.2
@@ -37,14 +103,10 @@ def get_pose_from_pixel(env, p, bot_pose):
 def save_labelled_img(img, prob_map, p, dir_path, fname, margin=5):
     original_img = img.permute(1, 2, 0)
     height, width = original_img.shape[:2]
-    d0 = max(0, p[1] - margin), max(0, p[0] - margin)
-    d0_ = min(width, p[1] + margin), min(height, p[0] + margin)
+    d0, d0_ = get_bounding_box(p, width, height, margin)
 
     color = np.rint(original_img[:,:,:3].detach().cpu().numpy()*255)
-    prob_map = prob_map.detach().cpu().numpy()
-    
-#     print("Color image shape:", color.shape)
-#     print("Prob map shape:", prob_map.shape)
+#     prob_map = prob_map.detach().cpu().numpy()
 
     cv2.rectangle(color, d0, d0_, (255, 0, 0), 1)
     color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
@@ -102,10 +164,10 @@ def get_image_wrapper(obs):
 
 def act_pick(env, obs, agent, save_dir=None, fname=None, device='cuda'):
     img = preprocess_image(get_image_wrapper(obs), device=device)
-    prob_map = agent.attention_layers(img)[0]
-    prob_map = prob_map[0]
+    logits = agent.attn_forward(img)[0]
     
-    p = np.unravel_index(torch.argmax(prob_map).detach().cpu(), prob_map.shape)
+    p, prob_map = get_p_from_logits(logits)
+
     img = img[0]
     if save_dir is not None:
         save_labelled_img(img, prob_map, p, save_dir, fname, margin=5)
@@ -115,10 +177,9 @@ def act_pick(env, obs, agent, save_dir=None, fname=None, device='cuda'):
 
 def act_place(env, obs, agent, save_dir=None, fname=None, device='cuda'):
     img = preprocess_image(get_image_wrapper(obs), device=device)
-    prob_map = agent.transport_layers(img)[0]
-    prob_map = prob_map[0]
+    logits = agent.transport_forward(img)[0]
+    p, prob_map = get_p_from_logits(logits)
     
-    p = np.unravel_index(torch.argmax(prob_map).detach().cpu(), prob_map.shape)
     img = img[0]
     if save_dir is not None:
         save_labelled_img(img, prob_map, p, save_dir, fname, margin=5)
@@ -141,8 +202,8 @@ def policy_evalute(cfg):
     
     model_ckpt = cfg['eval']['model_ckpt']
     cfg['name'] = 'eval_agent'
-    agent = agents.names['locobot'](cfg)
-    agent.load_from_checkpoint(model_ckpt)
+#     agent = agents.names['locobot'](cfg)
+    agent = agents.names['locobot'].load_from_checkpoint(model_ckpt)
     
     agent.eval()
     agent = agent.to(device)
@@ -154,56 +215,72 @@ def policy_evalute(cfg):
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], 'eval'))
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
+    
+    if not os.path.exists(data_path):
+        os.makedirs(data_path)
 
     seed = cfg['seed']
 
     rollout_summary = np.zeros(cfg['n'])
-    for rollout_idx in range(cfg['n']):
-        print(f'Rollout: {rollout_idx}')
-        episode, total_reward = [], 0
-        seed += 2
-        np.random.seed(seed)
-        random.seed(seed)
+    
+    print('Agent loaded')
+    
+    if cfg['eval']['on_train_data']:
+        train_ds = RavensDataset(os.path.join(cfg['data_dir'], '{}-train'.format(cfg['task'])), cfg,
+                             store=False, cam_idx=[0], n_demos=cfg['n'], augment=False, randomize=False)
+        train_loader = DataLoader(train_ds, batch_size=32,
+                                num_workers=20,
+                                shuffle = True)
+        print('Train dataset loaded')
+        for epoch in range(cfg['eval']['epochs']):
+            for batch_idx, batch in enumerate(train_loader):
+                print(f'Batch idx: {batch_idx}')
+                eval_training_data(agent, batch, batch_idx, epoch, save_dir=data_path)
+        return None, None
+    else:
+        for rollout_idx in range(cfg['n']):
+            print(f'Rollout: {rollout_idx}')
+            episode, total_reward = [], 0
+            seed += 2
+            np.random.seed(seed)
+            random.seed(seed)
 
-        env.set_task(task)
-        obs = env.reset()
-        info = env.info
-        reward = 0
-        rollout_dir = os.path.join(data_path, f'{rollout_idx}')
-        if not os.path.exists(rollout_dir):
-            os.makedirs(rollout_dir)
+            env.set_task(task)
+            obs = env.reset()
+            info = env.info
+            reward = 0
 
-        for step in range(task.max_steps):
-            # pdb.set_trace()
-            obs = obs[-env.num_turns:]
-            ####################################################################
-            pick_pose = act_pick(env, obs, agent, rollout_dir, f'{step}_explore1', device=device)
-            env.motion_planner(pick_pose[0][:2])
-            obs = [env.get_obs_wrapper()]
-            ####################################################################
-            pick_pose = act_pick(env, obs, agent, rollout_dir, f'{step}_pick', device=device)
-            env.task.primitive.pick(env, pick_pose)
-            obs = env.turn_around_center(env.table_center)
-            ####################################################################
-            place_pose = act_place(env, obs, agent, rollout_dir, f'{step}_explore2', device=device)
-            env.motion_planner(place_pose[0][:2])
-            obs = [env.get_obs_wrapper()]
-            ####################################################################
-            place_pose = act_pick(env, obs, agent, rollout_dir, f'{step}_place', device=device)
-            env.task.primitive.place(env, pick_pose)
-            obs = env.turn_around_center(env.table_center)
+            for step in range(task.max_steps):
+                # pdb.set_trace()
+                obs = obs[-env.num_turns:]
+                ####################################################################
+                pick_pose = act_pick(env, obs, agent, data_path, f'explore1_{rollout_idx}_{step}', device=device)
+                env.motion_planner(pick_pose[0][:2])
+                obs = [env.get_obs_wrapper()]
+                ####################################################################
+                pick_pose = act_pick(env, obs, agent, data_path, f'pick_{rollout_idx}_{step}', device=device)
+                env.task.primitive.pick(env, pick_pose)
+                obs = env.turn_around_center(env.table_center)
+                ####################################################################
+                place_pose = act_place(env, obs, agent, data_path, f'explore2_{rollout_idx}_{step}', device=device)
+                env.motion_planner(place_pose[0][:2])
+                obs = [env.get_obs_wrapper()]
+                ####################################################################
+                place_pose = act_place(env, obs, agent, data_path, f'place_{rollout_idx}_{step}', device=device)
+                env.task.primitive.place(env, place_pose)
+                obs = env.turn_around_center(env.table_center)
 
-            reward, info = env.task.reward()
-            done = env.task.done()
-            # is_done = check_completion_oracle()
-            if done:
-                rollout_summary[rollout_idx] = 1
-                break
+                reward, info = env.task.reward()
+                done = env.task.done()
+                # is_done = check_completion_oracle()
+                if done:
+                    rollout_summary[rollout_idx] = 1
+                    break
 
-    fname = os.path.join(data_path, 'summary.pkl')
-    np.savetxt(fname, rollout_summary)
-    print('Success rate:', np.sum(rollout_summary)/cfg['n'])
-    return np.sum(rollout_summary), cfg['n']
+        fname = os.path.join(data_path, 'summary.pkl')
+        np.savetxt(fname, rollout_summary)
+        print('Success rate:', np.sum(rollout_summary)/cfg['n'])
+        return np.sum(rollout_summary), cfg['n']
 
 @hydra.main(config_path='./cfg', config_name='data')
 def main(cfg):
@@ -212,14 +289,14 @@ def main(cfg):
     # Initialize environment and task.
     print('################################################################################')
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], 'eval'))
-    print('Multiprocessing enabled:', cfg['multiprocessing'])
+#     print('Multiprocessing enabled:', cfg['multiprocessing'])
 
     run = 0
     seed = int(time.time())
     
     cfg['mode']='eval'
 
-    if not cfg['multiprocessing']:
+    if not cfg['multiprocessing'] or cfg['eval']['on_train_data']:
         if not cfg['run_specified']:
             cfg['seed'] = seed
 

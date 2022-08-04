@@ -35,12 +35,35 @@ BOUNDS = np.array([[0.05, 1.25], [-0.6, 0.6], [0.10, 0.28]])
 PIXEL_SIZE = 0.00625
 IMG_SHAPE = (192, 192, 4)
 
+def save_labelled_images_dataloader(batch, batch_idx):
+    sample, _ = batch
+    imgs = sample[0]
+    labels = sample[1]
+    print('Batch length', len(imgs[0]))
+    print('Num substeps (4 expected)', len(imgs))
+    for i in range(len(imgs[0])):
+        for substep in range(len(imgs)):
+            img = imgs[substep][i]
+            label = labels[i][substep]
+            img = img.permute(1, 2, 0)
+            color = np.rint(img[:,:,:3].numpy()*255).astype(np.uint8)
+            p = np.unravel_index(torch.argmax(label), label.shape)
+            height, width = color.shape[:2]
+
+            d0 = max(0, p[1] - 10), max(0, p[0] - 10)
+            d0_ = min(width, p[1] + 10), min(height, p[0] + 10)
+
+            color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+
+            cv2.rectangle(color, d0, d0_, (0, 0, 255), 1)
+            cv2.imwrite(f'/home/gridsan/meenalp/cliport-locobot/images/image_{batch_idx}_{i}_{substep}.jpeg', color)
+
 class RavensDataset(Dataset):
     """A simple image dataset class."""
 
     def __init__(self, path, cfg, store,
                  cam_idx=[0], n_demos=0, augment=False,
-                 track=False, process_num=0):
+                 track=False, process_num=0, randomize=False):
         """A simple RGB-D image dataset."""
         self._path = path
 
@@ -54,6 +77,7 @@ class RavensDataset(Dataset):
         self.cache = self.cfg['dataset']['cache']
         self.n_demos = n_demos
         self.augment = augment
+        self.randomize = randomize
 
         self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60
         # legacy code issue: theta_sigma was newly added
@@ -65,7 +89,7 @@ class RavensDataset(Dataset):
         self.cam_idx = cam_idx
         self.fp_cam_idx = FP_CAM_IDX
         if not store:
-            self.img_frame = self.cfg['dataset']['img_frame']
+            self.img_frame = 'fp' # self.cfg['dataset']['img_frame']
             if self.img_frame == 'fp':
                 self.cam_idx = [self.fp_cam_idx]
         # self.pix_size = 0.002
@@ -106,7 +130,10 @@ class RavensDataset(Dataset):
                 raise Exception(f"Requested training on {self.n_demos} demos, "
                 f"but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
 
-            episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
+            if self.randomize:
+                episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
+            else:
+                episodes = list(range(self.n_episodes))[:self.n_demos]
             ###
             num_steps = self.get_steps_count(episode_paths)
             self.set(episode_paths, episodes, num_steps)
@@ -315,7 +342,7 @@ class RavensDataset(Dataset):
     def transform_pick_place(self, act, obs):
         pick_pose= act['pose0']
         place_pose = act['pose1']
-        center = [*act['center'], 0.2]
+#         center = [*act['center'], 0.2]
         X_W_pick = utils.get_transformation_matrix(pick_pose)
         X_W_place = utils.get_transformation_matrix(place_pose)
 
@@ -353,6 +380,23 @@ class RavensDataset(Dataset):
 
         return p0s, p0_thetas, p1s, p1_thetas #, centers
 
+    def perturb_wrapper(self, input_sample):
+        imgs, (p0s, p0_thetas), (p1s, p1_thetas), _ = input_sample
+        
+        img0, _, (p0_0, p1_0), perturb_params = utils.perturb(imgs[0], [p0s[0], p1s[0]])
+        img2, _, (p0_2, p1_2), perturb_params = utils.perturb(imgs[2], [p0s[2], p1s[2]])
+        img3, _, (p0_3, p1_3), perturb_params = utils.perturb(imgs[3], [p0s[3], p1s[3]])
+
+        imgs_new = [img0, imgs[1], img2, img3]
+        p0s_new = [p0_0.copy(), np.array(p0s[1]), p0_2.copy(), p0_3.copy()]
+        p1s_new = [p1_0.copy(), np.array(p1s[1]), p1_2.copy(), p1_3.copy()]
+
+#         p0s_new = [p0_0.copy(), np.array(p0s[1]), p0_2.copy(), np.array(p0s[3])]
+#         p1s_new = [p1_0.copy(), np.array(p1s[1]), p1_2.copy(), np.array(p1s[3])]
+#         print(img0.shape, p0s_new, p1s_new)
+
+        return imgs_new, (p0s_new, p0_thetas), (p1s_new, p1_thetas), None
+    
     def preprocess_sample(self, input_sample):
 
         def get_crops(img, pivot):
@@ -383,13 +427,10 @@ class RavensDataset(Dataset):
             img[substep][:,:,:3] = img[substep][:,:,:3]/255.0
             img[substep] = torch.tensor(img[substep]).float().permute(2, 0, 1)
 
-        # img[2] = img[2][None, ...] # dimension to make the orientation correlation easier
-        # img[3] = img[3][None, ...]
-
-        # print(f'length: {len(img), len(p0)}')
         crops = get_crops(img[1], p0[1])
         img_dims = self.in_shape[:2]
-        labels = torch.zeros((4, *img_dims), dtype=torch.uint8)
+        labels = torch.zeros((4, *img_dims), dtype=torch.float32)
+#         labels = torch.zeros((4,), dtype=torch.long)
 
         for i in range(2):
             p = p0[i]
@@ -400,17 +441,20 @@ class RavensDataset(Dataset):
 #                 print(f'Image shape: {img[i].shape}')
 #                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_pick.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
 #                 assert False
-                r = max(min(p[0], img_dims[0]), 0)
-                c = max(min(p[1], img_dims[1]), 0)
-                # labels[i, r, c] = 1.0
-            sigma = 1.0
-            for row in range(r-1, r+2):
-                for col in range(c-1, c+2):
-                    if not within_image_bounds((row, col)):
-                        continue
-                    d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
-                    labels[i, row, col] = np.exp(-d_sq)
-            labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
+                r = max(min(p[0], img_dims[0]-1), 0)
+                c = max(min(p[1], img_dims[1]-1), 0)
+            labels[i, r, c] = 1.0
+#             labels[i] = r*img_dims[1]+c
+
+#             sigma = 5.0
+#             margin = 1
+#             for row in range(r-margin, r+margin+1):
+#                 for col in range(c-margin, c+margin+1):
+#                     if not within_image_bounds((row, col)):
+#                         continue
+#                     d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
+#                     labels[i, row, col] = np.exp(-d_sq)
+#             labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
 
         for i in range(2, 4):
             p = p1[i]
@@ -422,17 +466,20 @@ class RavensDataset(Dataset):
 
 #                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_place.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
 #                 assert False
-                r = max(min(p[0], img_dims[0]), 0)
-                c = max(min(p[1], img_dims[1]), 0)
-                # labels[i, r, c] = 1.0
-            sigma = 1.0
-            for row in range(r-3, r+4):
-                for col in range(c-3, c+4):
-                    if not within_image_bounds((row, col)):
-                        continue
-                    d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
-                    labels[i, row, col] = np.exp(-d_sq)
-            labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
+                r = max(min(p[0], img_dims[0]-1), 0)
+                c = max(min(p[1], img_dims[1]-1), 0)
+            labels[i, r, c] = 1.0
+#             labels[i] = r*img_dims[1]+c
+
+#             sigma = 5.0
+#             margin = 5
+#             for row in range(r-margin, r+margin+1):
+#                 for col in range(c-margin, c+margin+1):
+#                     if not within_image_bounds((row, col)):
+#                         continue
+#                     d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
+#                     labels[i, row, col] = np.exp(-d_sq)
+#             labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
 
         # img = img.permute(2, 0, 1)
         return img, labels, crops, (p0, p0_theta, p1, p1_theta)
@@ -463,6 +510,9 @@ class RavensDataset(Dataset):
 
         sample, goal = self.load(episode_path, step_i, step_g,
                                       self.images, self.cache)
+        
+        if self.augment:
+            sample = self.perturb_wrapper(sample)
 
         return self.preprocess_sample(sample), self.preprocess_goal(goal)
 

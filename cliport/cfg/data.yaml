@@ -26,6 +26,8 @@ seed: 0
 
 eval:
   model_ckpt: None 
+  on_train_data: True
+  epochs: 1
 
 dataset:
   type: 'single' # 'single' or 'multi'

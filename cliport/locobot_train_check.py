@@ -13,6 +13,7 @@ import hydra
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger, CSVLogger
+from cliport.locobot_policy_eval import eval_training_data
 
 import pdb
 import random
@@ -45,26 +46,23 @@ def main(cfg):
     # Datasets
     dataset_type = cfg['dataset']['type']
 
-    train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg,
-                             store=False, cam_idx=[0], n_demos=n_demos, augment=False)
+    train_ds = RavensDataset(os.path.join(data_dir, '{}-train'.format(task)), cfg, randomize=True,
+                             store=False, cam_idx=[0], n_demos=n_demos, augment=True)
     val_ds = RavensDataset(os.path.join(data_dir, '{}-val'.format(task)), cfg,
                             store=False, cam_idx=[0], n_demos=n_val, augment=False)
     test_ds = RavensDataset(os.path.join(data_dir, '{}-test'.format(task)), cfg,
-                            store=False, cam_idx=[0], n_demos=100, augment=False)
-
+                            store=False, cam_idx=[0], n_demos=50, augment=False)
+    
     print(f'Length of training dataset: {len(train_ds)}')
     print(f'Length of validation dataset: {len(val_ds)}')
     print(f'Length of test dataset: {len(test_ds)}')
     
     train_loader = DataLoader(train_ds, batch_size=cfg['train']['batch_size'],
-                                num_workers=cfg['train']['num_cpus'],
-                                shuffle = True)
+                                num_workers=cfg['train']['num_cpus'], shuffle = True)
     val_loader = DataLoader(val_ds, batch_size=cfg['train']['batch_size'],
-                                num_workers=cfg['train']['num_cpus'],
-                                shuffle = False)
+                                num_workers=cfg['train']['num_cpus'], shuffle = False)
     test_loader = DataLoader(test_ds, batch_size=cfg['train']['batch_size'],
-                                num_workers=cfg['train']['num_cpus'],
-                                shuffle = False)
+                                num_workers=cfg['train']['num_cpus'], shuffle = False)
 
 #     print(f'Length of train loader: {len(train_loader)}')
 
@@ -81,50 +79,30 @@ def main(cfg):
     max_epochs = cfg['train']['max_epochs']
 
     val_checkpoint = ModelCheckpoint(
-        filename = 'min_val_loss',
-        monitor = 'val_loss',
-        mode = 'min',
-        save_top_k = 3,
-        dirpath = logs_dir + '/'
+        filename='min_val_loss',
+        monitor='transport_val_loss',
+        mode='min',
+        save_top_k=3,
+        dirpath=logs_dir + '/'
     )
     latest_checkpoint = ModelCheckpoint(
-        filename=logs_dir + '/latest',
+        filename='latest',
         monitor='step',
         mode='max',
-        every_n_train_steps=500,
-        every_n_epochs=0,
+        every_n_epochs=1,
         save_top_k=1,
-        train_time_interval=None, 
-        save_on_train_epoch_end=True
+        dirpath=logs_dir + '/'
     )
     
     callbacks = [val_checkpoint, latest_checkpoint]
-
-#     if early_stopping:
-#         print('Early Stopping enabled.')
-#         callbacks.append(EarlyStopping(monitor="val_loss",
-#                                        patience=val_patience, mode="min"))
-
-#     if torch.cuda.is_available():
-
-
     trainer = Trainer(logger=logger,
                       callbacks=callbacks,
                       accelerator='gpu',
                       devices=1,
                       precision=16,
-                      log_every_n_steps=2,
-                     # check_val_every_n_epoch=val_every_n_epochs,
+                      log_every_n_steps=10,
+                      check_val_every_n_epoch=cfg['train']['inv_val_freq'],
                       max_epochs=cfg['train']['max_epochs'])
-#     else:
-#         trainer = Trainer(logger=logger,
-#                           callbacks=callbacks,
-#                           accelerator='cpu',
-#                           devices=0,
-#                           precision='bf16',
-#                           log_every_n_steps=2,
-#                          # check_val_every_n_epoch=val_every_n_epochs,
-#                           max_epochs=cfg['train']['max_epochs'])
 
     print('Starting fitting')
     if cfg['train']['ckpt_path'] == 'None':
@@ -132,8 +110,16 @@ def main(cfg):
         
     trainer.fit(agent, train_loader, val_loader, ckpt_path=cfg['train']['ckpt_path'] )
     print('done')
-
     print(f'Best checkpoint at: {val_checkpoint.best_model_path}')
+    print('Evaluating')
+
+#     agent.eval()
+#     agent = agent.to('cuda')
+#     for batch_idx, batch in enumerate(train_loader):
+#         print(f'Batch idx: {batch_idx}')
+#         eval_training_data(agent, batch, batch_idx, 0, 
+#                            save_dir=os.path.join(data_dir,'{}-eval'.format(task)))
+    
     trainer.test(dataloaders=test_loader, ckpt_path = val_checkpoint.best_model_path)
 
     f = open(logs_dir + '/model.txt', 'w')
