@@ -382,7 +382,7 @@ class RavensDataset(Dataset):
 
     def perturb_wrapper(self, input_sample):
         imgs, (p0s, p0_thetas), (p1s, p1_thetas), _ = input_sample
-        
+
         img0, _, (p0_0, p1_0), perturb_params = utils.perturb(imgs[0], [p0s[0], p1s[0]])
         img2, _, (p0_2, p1_2), perturb_params = utils.perturb(imgs[2], [p0s[2], p1s[2]])
         img3, _, (p0_3, p1_3), perturb_params = utils.perturb(imgs[3], [p0s[3], p1s[3]])
@@ -396,7 +396,7 @@ class RavensDataset(Dataset):
 #         print(img0.shape, p0s_new, p1s_new)
 
         return imgs_new, (p0s_new, p0_thetas), (p1s_new, p1_thetas), None
-    
+
     def preprocess_sample(self, input_sample):
 
         def get_crops(img, pivot):
@@ -510,7 +510,7 @@ class RavensDataset(Dataset):
 
         sample, goal = self.load(episode_path, step_i, step_g,
                                       self.images, self.cache)
-        
+
         if self.augment:
             sample = self.perturb_wrapper(sample)
 

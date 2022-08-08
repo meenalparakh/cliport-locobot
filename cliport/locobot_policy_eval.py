@@ -21,7 +21,7 @@ import pickle
 from multiprocessing import cpu_count
 import time
 from cliport.dataset import BOUNDS, FP_CAM_IDX, PIXEL_SIZE, IMG_SHAPE
-import torch 
+import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
@@ -51,23 +51,23 @@ def eval_training_data(agent, batch, batch_idx, epoch, save_dir=None, device='cu
     explore_img_1 = imgs[0]
     explore_img_1_label = labels[:, 0].reshape((batch_size, -1)).to(device)
 #     print('explore label shape sum', explore_img_1_label.shape, explore_img_1_label.sum())
-    
+
     pick_img = imgs[1]
     pick_img_label = labels[:, 1].reshape((batch_size, -1)).to(device)
-    
+
     explore_preds = agent.attn_forward(explore_img_1.to(device))
     pick_preds = agent.attn_forward(pick_img.to(device))
-    
+
     cross_entropy_1 = -explore_img_1_label*F.log_softmax(explore_preds.reshape((batch_size, -1)), dim=1)
     print(f'Batch: {batch_idx}, Loss: {cross_entropy_1.sum()/batch_size}')
-    
+
     for idx in range(batch_size):
-        
+
         true_label = explore_img_1_label[idx].reshape((192, 192)).cpu()
 #         print('true label shape, sum', true_label.shape, true_label.sum())
         true_p = np.unravel_index(torch.argmax(true_label), true_label.shape)
         true_label = true_label.cpu().numpy()
-           
+
         logits = explore_preds[idx]
 #         print('Logits shape', logits.shape)
         p, prob = get_p_from_logits(logits)
@@ -77,19 +77,19 @@ def eval_training_data(agent, batch, batch_idx, epoch, save_dir=None, device='cu
         img = np.rint(img.detach().cpu().numpy()*255)
         img = img.astype('uint8').copy()
         height, width = img.shape[:2]
-        
+
         d0, d0_ = get_bounding_box(p, width, height, margin)
         d0_true, d0_true_ = get_bounding_box(true_p, width, height, margin)
-     
+
         cv2.rectangle(img, d0, d0_, (255, 0, 0), 1)
         cv2.rectangle(img, d0_true, d0_true_, (0, 255, 0), 1)
-        
+
         fname = f'{epoch}_{batch_idx}_{idx}'
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         cv2.imwrite(os.path.join(save_dir, fname+'_color.jpeg'), img)
         plt.imsave(os.path.join(save_dir, fname+'_prob_map.jpeg'), prob)
-        plt.imsave(os.path.join(save_dir, fname+'_true_prob_map.jpeg'), true_label)    
-    
+        plt.imsave(os.path.join(save_dir, fname+'_true_prob_map.jpeg'), true_label)
+
 def get_pose_from_pixel(env, p, bot_pose):
     x, y, z = utils.pix_to_xyz(p, 0.2, BOUNDS, PIXEL_SIZE, skip_height=True)
     z = 0.2
@@ -165,7 +165,7 @@ def get_image_wrapper(obs):
 def act_pick(env, obs, agent, save_dir=None, fname=None, device='cuda'):
     img = preprocess_image(get_image_wrapper(obs), device=device)
     logits = agent.attn_forward(img)[0]
-    
+
     p, prob_map = get_p_from_logits(logits)
 
     img = img[0]
@@ -179,7 +179,7 @@ def act_place(env, obs, agent, save_dir=None, fname=None, device='cuda'):
     img = preprocess_image(get_image_wrapper(obs), device=device)
     logits = agent.transport_forward(img)[0]
     p, prob_map = get_p_from_logits(logits)
-    
+
     img = img[0]
     if save_dir is not None:
         save_labelled_img(img, prob_map, p, save_dir, fname, margin=5)
@@ -189,7 +189,7 @@ def act_place(env, obs, agent, save_dir=None, fname=None, device='cuda'):
 
 def policy_evalute(cfg):
 
-    device='cuda'
+    device='cpu'
     env = Environment(
         cfg['assets_root'],
         disp=cfg['disp'],
@@ -199,15 +199,15 @@ def policy_evalute(cfg):
     )
     task = tasks.names[cfg['task']]()
     task.mode = cfg['mode']
-    
+
     model_ckpt = cfg['eval']['model_ckpt']
     cfg['name'] = 'eval_agent'
 #     agent = agents.names['locobot'](cfg)
     agent = agents.names['locobot'].load_from_checkpoint(model_ckpt)
-    
+
     agent.eval()
     agent = agent.to(device)
-    
+
     record = cfg['record']['save_video']
     save_data = cfg['save_data']
     # Initialize scripted oracle agent and dataset.
@@ -215,21 +215,21 @@ def policy_evalute(cfg):
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], 'eval'))
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
-    
+
     if not os.path.exists(data_path):
         os.makedirs(data_path)
 
     seed = cfg['seed']
 
     rollout_summary = np.zeros(cfg['n'])
-    
+
     print('Agent loaded')
-    
+
     if cfg['eval']['on_train_data']:
         train_ds = RavensDataset(os.path.join(cfg['data_dir'], '{}-train'.format(cfg['task'])), cfg,
                              store=False, cam_idx=[0], n_demos=cfg['n'], augment=False, randomize=False)
         train_loader = DataLoader(train_ds, batch_size=32,
-                                num_workers=20,
+                                num_workers=1,
                                 shuffle = True)
         print('Train dataset loaded')
         for epoch in range(cfg['eval']['epochs']):
@@ -293,7 +293,7 @@ def main(cfg):
 
     run = 0
     seed = int(time.time())
-    
+
     cfg['mode']='eval'
 
     if not cfg['multiprocessing'] or cfg['eval']['on_train_data']:
