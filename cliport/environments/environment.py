@@ -52,6 +52,7 @@ class Environment(gym.Env):
                  opengl_render=True,
                  realtime=False,
                  disp=False,
+                 boundary=False,
                  shared_memory=False,
                  hz=240,
                  record_cfg=None):
@@ -125,6 +126,7 @@ class Environment(gym.Env):
         self.pb_client.setAdditionalSearchPath(assets_root)
         self.pb_client.setAdditionalSearchPath(tempfile.gettempdir())
         self.pb_client.setTimeStep(1. / hz)
+        self.hz = hz
 
         if disp:
             target = self.pb_client.getDebugVisualizerCamera()[11]
@@ -133,12 +135,62 @@ class Environment(gym.Env):
                 cameraYaw=90,
                 cameraPitch=-25,
                 cameraTargetPosition=target)
+
         if task:
             self.set_task(task)
+
+        self.boundary = boundary
+
 
     def __del__(self):
         if hasattr(self, 'video_writer'):
             self.video_writer.close()
+
+    def add_cubes(self):
+        num_tables = 3
+        cube_positions = [[-1,2,0.1], [0, 1, 0.1], [1, 2, 0.1]]
+        thetas = [0]*num_tables
+        colors = [YELLOW, RED, GREEN]
+        orientations = [self.pb_client.getQuaternionFromEuler([0, 0, theta]) for theta in thetas]
+
+        self.cube_ids = []
+        for i in range(num_tables):
+            cube_id = self.pb_client.load_geom(shape_type='box',
+                                         size = [0.10, 0.08, 0.06],
+                                         mass = 1.0,
+                                         rgba = [*(colors[i]), 1],
+                                         base_pos = cube_positions[i],
+                                         base_ori = orientations[i])
+
+            self.cube_ids.append(cube_id)
+
+        for i in range(20):
+            self.step_simulation()
+
+    def add_boundary(self):
+        half_thickness = 0.02
+        half_height = 0.2
+        half_length = self.boundary_length
+        self.pb_client.load_geom(shape_type='box',
+                                 size=[half_length, half_thickness, half_height],
+                                 mass=0,
+                                 rgba=[0.6, 0.4, 0.2, 1],
+                                 base_pos=[0, half_length, half_height])
+        self.pb_client.load_geom(shape_type='box',
+                                 size=[half_thickness, half_length, half_height],
+                                 mass=0,
+                                 rgba=[0.6, 0.4, 0.2, 1],
+                                 base_pos=[half_length, 0, half_height])
+        self.pb_client.load_geom(shape_type='box',
+                                 size=[half_length, half_thickness, half_height],
+                                 mass=0,
+                                 rgba=[0.6, 0.4, 0.2, 1],
+                                 base_pos=[0, -half_length, half_height])
+        self.pb_client.load_geom(shape_type='box',
+                                 size=[half_thickness, half_length, half_height],
+                                 mass=0,
+                                 rgba=[0.6, 0.4, 0.2, 1],
+                                 base_pos=[-half_length, 0, half_height])
 
     @property
     def is_static(self):
@@ -210,11 +262,13 @@ class Environment(gym.Env):
 
         self.ws_edgepts = self.get_ws_edgepts(show=False, margin = 0.25)
 
+        # bot_pos = random.choice(self.ws_edgepts[0])
+        # dx, dy = np.array(self.table_center) - np.array(bot_pos)
+        # theta = np.arctan2(dy, dx) + np.random.uniform(-np.pi/6, np.pi/6)
+        # ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
 
-        bot_pos = random.choice(self.ws_edgepts[0])
-        dx, dy = np.array(self.table_center) - np.array(bot_pos)
-        theta = np.arctan2(dy, dx) + np.random.uniform(-np.pi/6, np.pi/6)
-        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
+        bot_pos = [0,0]
+        ori = self.pb_client.getQuaternionFromEuler([0, 0, 0])
 
         self.bot_id = pybullet_utils.load_urdf(self.pb_client,
                                                os.path.join(self.assets_root,
@@ -224,6 +278,7 @@ class Environment(gym.Env):
         self.locobot = Locobot(self, self.bot_id)
         # import pdb; pdb.set_trace()
         self.locobot.reset()
+        self.obj_ids['rigid'].append(self.bot_id)
 
         self.ee = self.task.ee(self.assets_root, self.pb_client, self.bot_id,
                                self.locobot.ee_link, self.obj_ids)
@@ -233,6 +288,10 @@ class Environment(gym.Env):
         # Reset task.
         self.task.reset(self)
 
+        if self.boundary:
+            self.boundary_length = 3
+            self.add_boundary()
+            self.add_cubes()
 
         self.agent_cams[-1] = self.locobot.get_camera_config(bot_frame=False)
         # Re-enable rendering.
@@ -272,7 +331,7 @@ class Environment(gym.Env):
         reward, info = self.task.reward() if action is not None else (0, {})
         done = self.task.done()
 
-        obs = self.turn_around_center(self.table_center)
+        obs = self.turn_around_center(reset_base=False)
         substep_obs.extend(obs)
         # obs = [*substep_obs, *obs]
 
@@ -550,8 +609,8 @@ class Environment(gym.Env):
             vel = self.locobot.wheel_default_rotate_vel
             # if abs(diffj) < 0.75:
             #     vel = 10.0
-            if abs(diffj) < 0.25:
-                vel = self.locobot.wheel_default_rotate_vel/2
+            if abs(diffj) < 0.5:
+                vel = self.locobot.wheel_default_rotate_vel/4
             if diffj > 0:
                 self.locobot.rotate_to_left(vel)
             else:
@@ -611,9 +670,9 @@ class Environment(gym.Env):
             #########################################################
             norm = np.linalg.norm([dx, dy])
             vel = self.locobot.wheel_default_forward_vel
-            if norm < 0.75:
+            if (norm < 0.75) and (norm > 0.2):
                 vel = self.locobot.wheel_default_forward_vel/2
-            if norm < 0.2:
+            elif (norm < 0.2):
                 vel = 10.0
             self.locobot.base_forward(vel)
             self.step_simulation()
@@ -640,19 +699,16 @@ class Environment(gym.Env):
         success = self.rotate_base(theta, relative = False, tol = tol)
         return success
 
-    def turn_around_center(self, center):
+    def turn_around_center(self, center=None, reset_base=True):
         obs = []
-        bot_pos = self.locobot.get_base_pose()[0]
-        dx, dy = np.array(center) - np.array(bot_pos[:2])
-        theta = np.arctan2(dy, dx)
+        if reset_base:
+            bot_pos = self.locobot.get_base_pose()[0]
+            dx, dy = np.array(center) - np.array(bot_pos[:2])
+            theta = np.arctan2(dy, dx)
+            ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
+            self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
 
-        # self.rotate_base(theta-np.pi/6, relative=False)
-        # while not self.is_static:
-        #     self.step_simulation()
-
-        ori = self.pb_client.getQuaternionFromEuler([0, 0, theta])
-        self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
-        self.locobot.set_locobot_camera_pan_tilt(-np.pi/5, 0.6)
+        self.locobot.set_locobot_camera_pan_tilt(-np.pi/4, 0.6)
 
         for i in range(10):
             self.step_simulation()
@@ -660,7 +716,7 @@ class Environment(gym.Env):
 
         # ori = self.pb_client.getQuaternionFromEuler([0, 0, theta+np.pi/6])
         # self.pb_client.resetBasePositionAndOrientation(self.bot_id, bot_pos, ori)
-        self.locobot.set_locobot_camera_pan_tilt(np.pi/5, 0.6)
+        self.locobot.set_locobot_camera_pan_tilt(np.pi/4, 0.6)
         for i in range(10):
             self.step_simulation()
         obs.append(self.get_obs_wrapper())

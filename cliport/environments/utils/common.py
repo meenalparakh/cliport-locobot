@@ -37,6 +37,7 @@ BLACK = colorsys.hsv_to_rgb(0, 0.75, 0)
 RED = colorsys.hsv_to_rgb(0, 0.75, 0.75)
 BLUE = colorsys.hsv_to_rgb(0.55, 0.75, 0.75)
 GREEN = colorsys.hsv_to_rgb(0.4, 0.75, 0.4)
+YELLOW = [0.8, 0.8, 0.1]
 
 def generate_color(exclude_colors = None):
     if exclude_colors is None:

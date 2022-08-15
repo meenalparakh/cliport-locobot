@@ -31,9 +31,10 @@ FP_CAM_IDX = 0
 # NUM_EXPLORATION_IMAGES = 2
 MAX_SUBSTEPS = 10
 IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
-BOUNDS = np.array([[0.05, 1.25], [-0.6, 0.6], [0.10, 0.28]])
+# BOUNDS = np.array([[0.05, 1.25], [-0.6, 0.6], [0.10, 0.28]])
+BOUNDS = np.array([[-0.2, 1.40], [-0.8, 0.8], [0.10, 0.28]])
 PIXEL_SIZE = 0.00625
-IMG_SHAPE = (192, 192, 4)
+IMG_SHAPE = (256, 256, 4)
 
 def save_labelled_images_dataloader(batch, batch_idx):
     sample, _ = batch
@@ -189,7 +190,7 @@ class RavensDataset(Dataset):
             perturb_params =  None
 
             if act:
-                p0s, p0_thetas, p1s, p1_thetas = self.transform_pick_place(act, obs)
+                p0s, p0_thetas, p1s, p1_thetas = self.transform_pick_place(act, obs, IMAGE_PAIRINGS)
 
             steps_data.append((p0s, p0_thetas, p1s, p1_thetas))
 
@@ -306,6 +307,7 @@ class RavensDataset(Dataset):
         return img
 
     def get_image_wrapper(self, obs, pairings):
+
         """Stack color and height images image."""
         images = []
 
@@ -339,7 +341,7 @@ class RavensDataset(Dataset):
             images.append(img)
         return images
 
-    def transform_pick_place(self, act, obs):
+    def transform_pick_place(self, act, obs, pairings):
         pick_pose= act['pose0']
         place_pose = act['pose1']
 #         center = [*act['center'], 0.2]
@@ -348,7 +350,7 @@ class RavensDataset(Dataset):
 
         acts = []
         p0s, p0_thetas, p1s, p1_thetas, centers = [], [], [], [], []
-        for i in range(len(IMAGE_PAIRINGS)):
+        for i in range(len(pairings)):
             substep_obs = obs[IMAGE_PAIRINGS[i][0]]
             # if self.img_frame == 'fp':
             X_WL = utils.get_transformation_matrix(substep_obs['bot_pose'])

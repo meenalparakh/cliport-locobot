@@ -39,8 +39,8 @@ class Locobot:
         self.bot = bot
 
         self.wheel_joints = [1, 2]  # Left and right wheels
-        self.wheel_default_forward_vel = 20
-        self.wheel_default_rotate_vel = 10
+        self.wheel_default_forward_vel = 30
+        self.wheel_default_rotate_vel = 20
 
         # self.time_long = 80
         # self.time_short = 40
