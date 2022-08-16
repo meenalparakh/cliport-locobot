@@ -4,6 +4,7 @@ import matplotlib.animation as animation
 import numpy as np
 import time
 from cliport.utils.controller_utils import compute_controls_from_xy
+import time
 
 np.set_printoptions(precision=3,suppress=True)
 max_linear_velocity = 3.0
@@ -85,7 +86,8 @@ def get_control_waypoints(waypoints, state, dt=0.1, error_th=1, verbose=False):
     A = np.eye(3)
     # Q = np.array([[1.0, 0, 0],[0, 1.0, 0], [0, 0, 0.50]])
     Q = np.array([[1.0, 0, 0],[0, 1.0, 0], [0, 0, 5.0]])
-    R = np.array([[1.0, 0.0], [0.0, 0.1]])
+    # R = np.array([[1.0, 0.0], [0.0, 0.1]])
+    R = np.array([[0.1, 0.0], [0.0, 0.05]])
     commanded_wheel_vel = np.inf
 
     for idx in range(len(waypoints)):

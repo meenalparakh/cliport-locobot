@@ -20,14 +20,20 @@ from cliport.dataset import PIXEL_SIZE
 from locobot_policy_eval import get_pose_from_pixel
 from cliport.utils.controller_utils import compute_controls_from_xy
 # import cliport.utils.cubic_spline_planner as cubic_spline_planner
-from cliport.utils.pid_controller import get_control_waypoints, State
+from cliport.utils.lqr_controller import get_control_waypoints, State
 
-DT = 0.1
+DT = 0.2
 
-def run_simulation(X, state):
+def run_simulation(X, state, goal_yaw=None):
     xyt, _ = compute_controls_from_xy(X, 0, DT)
+    if goal_yaw is not None:
+        goal_x, goal_y = xyt[-1,:2]
+        goal = np.array([[goal_x, goal_y, goal_yaw]])
+        xyt = np.concatenate((xyt, goal), axis=0)
+
     trajectory, controls, waypoints_reached, error = \
-            get_control_waypoints(xyt, state, dt=DT, error_th=0.05, verbose=True)
+            get_control_waypoints(xyt, state, dt=DT, error_th=0.2, verbose=True)
+            # get_control_waypoints(xyt, state, dt=DT, error_th=0.05, verbose=True)
 
     plt.plot(xyt[:,0], xyt[:,1], c='blue', marker='*')
     trajectory = np.array(trajectory)
@@ -60,60 +66,54 @@ def map_pixel(pt, from_dim, to_dim):
     # print(pt, to_center, from_center, scale)
     return within_bounds(new_pt, *to_dim)
 
-def get_nearest_pt(pt, occ_grid):
-    x_dim, y_dim = occ_grid.shape
-    cols, rows = np.meshgrid(range(x_dim), range(y_dim))
-    distance = np.square(rows - pt[0]) + np.square(cols - pt[1])
-    distance = distance/np.max(distance)
-    distance = np.where(occ_grid > 10, np.ones((x_dim, y_dim)), distance)
+def get_path_from_pixels(env, obs, pixel_pts, currrent_dim, original_dim):
+    pixels = []
+    path_pos = []
+    for idx in range(0, len(pixel_pts), 5):
+        pt = pixel_pts[idx]
+        new_pt = map_pixel(pt, currrent_dim, original_dim)
+        pixels.append(new_pt)
+        path_pt = get_pose_from_pixel(env, new_pt, obs[-1]['bot_pose'])[0][:2]
+        path_pos.append(path_pt)
+        color = cv2.circle(img=color, center = (new_pt[1], new_pt[0]),
+                           radius=2, color=(0,255,0), thickness=-1)
+    return path_pos, pixels
 
-    nearest_pt = np.unravel_index(np.argmin(distance), distance.shape)
+def get_nearest_pt(pixel, occupancy_grid):
+    r, c = pixel
+    if occupancy_grid[r, c] < 0.5:
+        return (r, c), 0
+    else:
+        x_dim, y_dim = occupancy_grid.shape
+        cols, rows = np.meshgrid(range(x_dim), range(y_dim))
+        distance = np.square(rows - r) + np.square(cols - c)
+        distance = distance/np.max(distance)
+        distance = np.where(occ_grid > 10, np.ones((x_dim, y_dim)), distance)
 
-    distance = (distance*255).astype(np.uint8)
-    cv2.imwrite('/Users/meenalp/Desktop/distance_plot.jpeg', distance)
-    return nearest_pt, distance
+        nearest_pt = np.unravel_index(np.argmin(distance), distance.shape)
 
-@hydra.main(config_path='./cfg', config_name='data')
-def main(cfg):
-    env = Environment(
-        cfg['assets_root'],
-        disp=cfg['disp'],
-        boundary=False,
-        shared_memory=cfg['shared_memory'],
-        hz=480,
-        record_cfg=cfg['record']
-    )
-    task = tasks.names[cfg['task']]()
-    task.mode = cfg['mode']
-    agent = task.oracle(env, locobot=cfg['locobot'])
+        cv2.imwrite('/Users/meenalp/Desktop/distance_plot.jpeg', (distance*255).astype(np.uint8))
+        return nearest_pt, np.min(distance)
 
-    dataset = RavensDataset(os.path.join('data_dir', '{}-train'.format(task)), cfg,
-                             store=False, cam_idx=[0], n_demos=0)
-
-    env.set_task(task)
-    obs = env.reset()
-    info = env.info
-
-    obs = obs[-env.num_turns:]
-    act = agent.act(obs, info)
-
+def get_path(env, dataset, obs, act):
     pairings = [[0, 1]]
     image = dataset.get_image_wrapper(obs, pairings)
     p0s, _, _, _ = dataset.transform_pick_place(act, obs, pairings)
     pick_pt = p0s[0]
+    pick_pose = get_pose_from_pixel(env, pick_pt, obs[-1]['bot_pose'])
 
     substep = 0
     color = image[substep][:,:,:3]
     color_fname = f'navi_color.png'
     color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
-    color = cv2.circle(color, (p0s[0][1], p0s[0][0]), radius=2, color=(0,255,0),
+    color = cv2.circle(color, (pick_pt[1], pick_pt[0]), radius=2, color=(0,255,0),
                         thickness=-1)
     cv2.imwrite(os.path.join('/Users/meenalp/Desktop', color_fname), color)
 
     depth = image[substep][:,:,3]
-    depth_fname = f'navi_depth.png'
-    sdepth = depth/np.max(depth)
-    plt.imsave(os.path.join('/Users/meenalp/Desktop', depth_fname), sdepth)
+    # depth_fname = f'navi_depth.png'
+    # sdepth = depth/np.max(depth)
+    # plt.imsave(os.path.join('/Users/meenalp/Desktop', depth_fname), sdepth)
 
     occupancy_grid = (depth > 0.05).astype(np.uint8)*255
     occupancy_grid_dilated = dilate_image(occupancy_grid)
@@ -139,19 +139,20 @@ def main(cfg):
     cv2.imwrite('/Users/meenalp/Desktop/resized_color.jpeg', color_resized)
     # return
 
-    nearest_pt, distance = get_nearest_pt(new_pick_pt, occupancy_grid_dilated)
+    # nearest_pt, distance = get_nearest_pt(new_pick_pt, occupancy_grid_dilated)
 
+    nearest_pt, _ = get_nearest_pt(new_pick_pt, occupancy_grid_dilated)
     goal = nearest_pt
     start_ = (x_dim_//2, int(0.2/PIXEL_SIZE))
     start = map_pixel(start_, (x_dim_, y_dim_), (x_dim, y_dim))
-
-    marked = distance.copy()[..., None]
-    marked = marked.repeat(3, axis=2)
-    marked = cv2.circle(marked, (goal[1], goal[0]), radius=2, color=(0,255,0),
-                        thickness=-1)
-    marked = cv2.circle(marked, (start[1], start[0]), radius=2, color=(0,0,255),
-                        thickness=-1)
-    cv2.imwrite(os.path.join('/Users/meenalp/Desktop', 'start_end.jpeg'), marked)
+    start = get_nearest_pt(start, occupancy_grid_dilated)
+    # marked = distance.copy()[..., None]
+    # marked = marked.repeat(3, axis=2)
+    # marked = cv2.circle(marked, (goal[1], goal[0]), radius=2, color=(0,255,0),
+    #                     thickness=-1)
+    # marked = cv2.circle(marked, (start[1], start[0]), radius=2, color=(0,0,255),
+    #                     thickness=-1)
+    # cv2.imwrite(os.path.join('/Users/meenalp/Desktop', 'start_end.jpeg'), marked)
 
     map = OccupancyGridMap(x_dim, y_dim)
     map.occupancy_grid_map = occupancy_grid_dilated
@@ -160,52 +161,55 @@ def main(cfg):
 
     path, g, rhs = solver.move_and_replan(robot_position=start)
 
-    pixels = []
-    path_pos = []
-    for idx in range(0, len(path), 3):
-        pt = path[idx]
-        new_pt = map_pixel(pt, (x_dim, y_dim), (x_dim_, y_dim_))
-        pixels.append(new_pt)
+    path_pos, pixels = get_path_from_pixels(env, obs, path,
+                                        (x_dim, y_dim), (x_dim_, y_dim_))
 
-        path_pt = get_pose_from_pixel(env, new_pt, obs[-1]['bot_pose'])[0][:2]
-        path_pos.append(path_pt)
-
-        color = cv2.circle(img=color, center = (new_pt[1], new_pt[0]),
-                           radius=2, color=(0,255,0), thickness=-1)
-
-    # path_poses = []
-    # for pt_idx in range(len(path)-1):
-    #     dx, dy = path_pos[pt_idx+1] - path_pos[pt_idx]
-    #     theta = np.arctan2(dy, dx)
-    #     path_poses.append(*(path_pos[pt_idx]), theta)
     image = cv2.arrowedLine(color, (pixels[-1][1], pixels[-1][0]),
                                     (pick_pt[1], pick_pt[0]),
                                 (255, 255, 0), 1, tipLength = 0.2)
     cv2.imwrite(os.path.join('/Users/meenalp/Desktop', 'marked.jpeg'), color)
-
-    state = State(env, DT)
-    X = np.array(path_pos)
-    plt.plot(X[:,0], X[:, 1]); plt.axis('equal')
-    plt.savefig('/Users/meenalp/Desktop/trajectory.png')
-
-    run_simulation(X, state)
+    return path_pos, pick_pose
 
 
-    # waypoints = deque()
-    #
-    # waypoints.append(WayPoint(start, tol=0.5, end_goal=False))
-    # waypoints.append(WayPoint((-0.707,0.707), tol=0.4, end_goal=False))
-    # waypoints.append(WayPoint((-1,1), tol=0.4, end_goal=False))
-    # waypoints.append(WayPoint((-1,1.707), tol=0.4, end_goal=False))
-    # waypoints.append(WayPoint(goal, tol=0.3, end_goal=True))
-    #
-    # while waypoints:
-    #     subgoal = waypoints.popleft()
-    #     env.move_to(subgoal.pt, tol=subgoal.tol)
+@hydra.main(config_path='./cfg', config_name='data')
+def main(cfg):
+    env = Environment(
+        cfg['assets_root'],
+        disp=cfg['disp'],
+        boundary=False,
+        shared_memory=cfg['shared_memory'],
+        hz=480,
+        record_cfg=cfg['record']
+    )
+    task = tasks.names[cfg['task']]()
+    task.mode = cfg['mode']
+    agent = task.oracle(env, locobot=cfg['locobot'])
 
+    dataset = RavensDataset(os.path.join('data_dir', '{}-train'.format(task)), cfg,
+                             store=False, cam_idx=[0], n_demos=0)
 
-    # while True:
-    #     env.pb_client.stepSimulation()
+    env.set_task(task)
+    for i in range(cfg['n']):
+        obs = env.reset()
+        info = env.info
+
+        obs = obs[-env.num_turns:]
+        act = agent.act(obs, info)
+
+        path_pos, pick_pose = get_plan(env, dataset, obs, act)
+        # path_pos = get_plan(env, image, pick_pt)
+
+        state = State(env, DT)
+        X = np.array(path_pos)
+        plt.plot(X[:,0], X[:, 1]); plt.axis('equal')
+        plt.savefig('/Users/meenalp/Desktop/trajectory.png')
+
+        pick_pos = pick_pose[0][:2]
+        dx, dy = np.array(pick_pos) - np.array(path_pos[-1])
+        theta = np.arctan2(dy, dx)
+        run_simulation(X, state, goal_yaw=theta)
+
+        time.sleep(2)
 
 if __name__ == '__main__':
     main()

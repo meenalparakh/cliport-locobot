@@ -721,6 +721,7 @@ class Environment(gym.Env):
             self.step_simulation()
         obs.append(self.get_obs_wrapper())
 
+        self.locobot.set_locobot_camera_pan_tilt(0.0, 0.6)
         return obs
 
     def motion_planner(self, target_pos, tol_dist=0.52, tol_angle=np.pi/6):
