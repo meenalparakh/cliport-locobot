@@ -63,7 +63,7 @@ SLEEP_TIME = 0.1  # sleep time after every action
 
 from cliport.utils.controller_utils import TrajectoryTracker, compute_controls_from_xy
 import cliport.utils.cubic_spline_planner as cubic_spline_planner
-from cliport.utils.pid_controller import get_control_waypoints, State
+from cliport.utils.lqr_controller import get_control_waypoints, State
 # def run_simulation(env):
 #     traj_tracker.do_simulation(np.array([0,0,0]), plan)
 #     traj_tracker.plot_plan_execution('/Users/meenalp/Desktop/simulation.jpeg')
