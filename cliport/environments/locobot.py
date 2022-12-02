@@ -20,7 +20,7 @@ import time
 def _get_default_camera_cfg():
     _C = CN()
     _C.ZNEAR = 0.01
-    _C.ZFAR = 10
+    _C.ZFAR = 5
     _C.WIDTH = 640
     _C.HEIGHT = 480
     _C.FOV = 90

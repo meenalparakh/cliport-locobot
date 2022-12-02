@@ -10,6 +10,7 @@ from cliport.models.streams.two_stream_transport_lang_fusion import TwoStreamTra
 from cliport.models.streams.two_stream_attention_lang_fusion import TwoStreamAttentionLangFusionLat
 from cliport.models.streams.two_stream_transport_lang_fusion import TwoStreamTransportLangFusionLat
 
+import pdb
 
 class TwoStreamClipLingUNetTransporterAgent(TransporterAgent):
     def __init__(self, name, cfg, train_ds, test_ds):
@@ -37,6 +38,7 @@ class TwoStreamClipLingUNetTransporterAgent(TransporterAgent):
         )
 
     def attn_forward(self, inp, softmax=True):
+        pdb.set_trace()
         inp_img = inp['inp_img']
         lang_goal = inp['lang_goal']
 
@@ -161,6 +163,7 @@ class TwoStreamClipLingUNetLatTransporterAgent(TwoStreamClipLingUNetTransporterA
             cfg=self.cfg,
             device=self.device_type,
         )
+        pdb.set_trace()
 
 
 class TwoStreamRN50BertLingUNetTransporterAgent(TwoStreamClipLingUNetTransporterAgent):

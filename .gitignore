@@ -141,3 +141,5 @@ dmypy.json
 .pyre/
 
 .DS_Store
+*.ckpt
+.hydra

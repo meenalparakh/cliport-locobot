@@ -32,31 +32,7 @@ class State:
         for i in range(num_steps):
             self.env.step_simulation()
 
-def compute_controls_from_xy(xy, theta0, flip_theta=False):
-    """
-    Given the xy trajectory, this computes the orientation, and v and w
-    commands to track this trajectory. These can then be used to close the loop
-    on this trajectory using an LQR controller.
-    """
-    x, y = xy.T
-    theta = np.arctan2(y[1:] - y[:-1], x[1:] - x[:-1])
-    if flip_theta:
-        theta = theta + np.pi
-    theta = np.concatenate([[theta0], theta], axis=0)
-    # Unwrap theta as necessary.
-    old_theta = theta[0]
-    for i in range(theta.shape[0] - 1):
-        theta[i + 1] = wrap_theta(theta[i + 1] - old_theta) + old_theta
-        old_theta = theta[i + 1]
-
-    xyt = np.array([x, y, theta]).T
-    # v = np.linalg.norm(xy[1:, :] - xy[:-1, :], axis=1)
-    # w = theta[1:] - theta[:-1]
-    # v = np.append(v, 0)
-    # w = np.append(w, 0)
-    # us = np.array([v, w]).T
-    # us = us / dt
-    return xyt #, us
+    
 
 def getB(yaw, dt):
     B = np.array([[np.cos(yaw)*dt, 0],[np.sin(yaw)*dt, 0],[0, dt]])
@@ -65,19 +41,7 @@ def getB(yaw, dt):
 def pi_2_pi(angle):
     return (angle + np.pi) % (2 * np.pi) - np.pi
 
-def lqr(x_error, Q, R, A, B, dt):
-    # x_error = actual_state_x - desired_state_xf
-    N = 100
-    P = [None] * (N + 1)
-    Qf = Q
-    P[N] = Qf
-    for i in range(N, 0, -1):
-        P[i-1] = Q + A.T @ P[i] @ A - (A.T @ P[i] @ B) @ np.linalg.pinv(
-            R + B.T @ P[i] @ B) @ (B.T @ P[i] @ A)
 
-    K = -np.linalg.pinv(R + B.T @ P[0] @ B) @ B.T @ P[0] @ A
-    u_star = K @ x_error #+ np.array([2.0, 0])
-    return u_star
 
 
 def get_wheel_vel_from_controls(v, w):
@@ -142,8 +106,7 @@ def get_control_waypoints(waypoints, state, error_th=1, verbose=False):
 
     return trajectory, controls, waypoints_reached, error
 
-def run_simulation(X, state, goal_yaw=None, fig_filename=None):
-    xyt = compute_controls_from_xy(X, 0)
+def run_simulation(xyt, state, goal_yaw=None, fig_filename=None):
     if goal_yaw is not None:
         goal_x, goal_y = xyt[-1,:2]
         goal = np.array([[goal_x, goal_y, goal_yaw]])

@@ -23,12 +23,10 @@ from cliport.utils.lqr_controller import compute_controls_from_xy
 
 # TODO
 # (0) make the robot move out first
-# (1) initial pose of the robot - remember it 
-# (2) when obtain a new image transform it based on the 
+# (1) initial pose of the robot - remember it
+# (2) when obtain a new image transform it based on the
 #     original pose of the robot
 # (3) keep upgrading the grid
-#
-
 
 
 def get_occupancy_grid(env, dataset, obs):
@@ -45,28 +43,68 @@ def get_occupancy_grid(env, dataset, obs):
     new_size = (x_dim_//downscale_factor, y_dim_//downscale_factor)
     occupancy_grid_dilated = cv2.resize(occupancy_grid_dilated,
                                     new_size, interpolation=cv2.INTER_AREA)
-    occupancy_grid_dilated = (occupancy_grid_dilated > 10).astype(np.uint8)*255  
-    return occupancy_grid_dilated
-    
+    occupancy_grid_dilated = (occupancy_grid_dilated > 10).astype(np.uint8)*255
+    return occupancy_grid_dilated, depth.shape
+
+def get_start_goal_info(env, dataset, osb, act, occupancy_grid,
+                            original_shape, downscaled_shape):
+    pairings = [[0, 1]]
+    p0s, _, _, _ = dataset.transform_pick_place(act, obs, pairings)
+    pick_pt = p0s[0]
+    new_pick_pt = map_pixel(pick_pt, (x_dim_, y_dim_), (x_dim, y_dim))
+    goal, _ = get_nearest_pt(new_pick_pt, occupancy_grid)
+
+    start = (x_dim_//2, int(0.2/PIXEL_SIZE))
+    curr_xy = get_pose_from_pixel(env, start, obs[-1]['bot_pose'])[0][:2]
+
+    start = map_pixel(start, (x_dim_, y_dim_), (x_dim, y_dim))
+    start = get_nearest_pt(start, occupancy_grid)
+
+    start_xy = map_pixel(start, (x_dim, y_dim), (x_dim_, y_dim_))
+    start_xy = get_pose_from_pixel(env, start_xy, obs[-1]['bot_pose'])[0][:2]
+
+    dx, dy = np.array(curr_xy) - np.array(start_xy)
+    backtrack_theta = np.arctan2(dy, dx)
+    start_target_state = (*start_xy, backtrack_theta)
+
+    pick_pose = get_pose_from_pixel(env, pick_pt, obs[-1]['bot_pose'])
+    pick_pos = pick_pose[0][:2]
+    dx, dy = np.array(pick_pos) - np.array(path_pos[-1])
+    goal_yaw = np.arctan2(dy, dx)
+
+    return start, goal, start_target_state, goal_yaw
+
+def plan_and_move(env, state, dataset, obs, act):
+    occupancy_grid_dilated, (x_dim_, y_dim_) = get_occupancy_grid(env, dataset, obs)
+    x_dim, y_dim = occupancy_grid_dilated.shape
+
+    start, goal, start_target_state, goal_yaw = get_start_goal_info(env, dataset, obs, act, occupancy_grid_dilated,
+                                        (x_dim_, y_dim_), (x_dim, y_dim))
+
+    ## backtrack a little to move out of "obstacle" region
+
+    run_simulation([start_target_state], state, goal_yaw)
+
+    occupancy_grid = OccupancyGridMap(
+                                      x_dim=map.x_dim,
+                                      y_dim=map.y_dim,
+                                      exploration_setting='8N')
+
+    dstar = DStarLite(map=occupancy_grid, s_start=start, s_goal=goal)
+
+    while not goal_reached(env, goal):
+        grid = get_occupancy grid()
+        plan = d_star_planner()
+
+
+
 def get_path(env, dataset, obs, act):
 
     occupancy_grid_dilated = get_occupancy_grid(env, dataset, obs)
     x_dim, y_dim = occupancy_grid_dilated.shape
 
-    pairings = [[0, 1]]
-    p0s, _, _, _ = dataset.transform_pick_place(act, obs, pairings)
-    pick_pt = p0s[0]
-    pick_pose = get_pose_from_pixel(env, pick_pt, obs[-1]['bot_pose'])
-    new_pick_pt = map_pixel(pick_pt, (x_dim_, y_dim_), (x_dim, y_dim))
-
-    goal, _ = get_nearest_pt(new_pick_pt, occupancy_grid_dilated)
-    start = (x_dim_//2, int(0.2/PIXEL_SIZE))
-    start_original = map_pixel(start, (x_dim_, y_dim_), (x_dim, y_dim))
-    start = get_nearest_pt(start, occupancy_grid_dilated)
-
-    start_ = map_pixel(start_, (x_dim, y_dim), (x_dim_, y_dim_))
-    start_xy = get_pose_from_pixel(env, start_, obs[-1]['bot_pose'])[0][:2]
-
+    start, goal = get_start_goal_info(env, dataset, osb, act, occupancy_grid)
+    run_simulation(xyt, state, goal_yaw=theta)
 
     # marked = distance.copy()[..., None]
     # marked = marked.repeat(3, axis=2)
@@ -111,25 +149,26 @@ def main(cfg):
                              store=False, cam_idx=[0], n_demos=0)
 
     env.set_task(task)
+
     for i in range(cfg['n']):
         obs = env.reset()
+        state = State(env, DT)
+
         info = env.info
 
         obs = obs[-env.num_turns:]
         act = agent.act(obs, info)
 
-        path_pos, pick_pose = get_plan(env, dataset, obs, act)
+        path_pos,  = get_plan(env, dataset, obs, act)
         # path_pos = get_plan(env, image, pick_pt)
 
-        state = State(env, DT)
         X = np.array(path_pos)
         plt.plot(X[:,0], X[:, 1]); plt.axis('equal')
         plt.savefig('/Users/meenalp/Desktop/trajectory.png')
 
-        pick_pos = pick_pose[0][:2]
-        dx, dy = np.array(pick_pos) - np.array(path_pos[-1])
-        theta = np.arctan2(dy, dx)
-        run_simulation(X, state, goal_yaw=theta, )
+
+        xyt = compute_controls_from_xy(X, 0)
+        run_simulation(xyt, state, goal_yaw=theta)
 
         time.sleep(2)
 
