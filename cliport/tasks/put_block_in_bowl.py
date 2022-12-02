@@ -18,12 +18,10 @@ class PutBlockInBowlUnseenColors(Task):
         self.lang_template = "put the {pick} blocks in a {place} bowl"
         self.task_completed_desc = "done placing blocks in bowls."
 
-    def reset(self, env, n_bowls = 1, n_blocks = None, distractors = False):
+    def reset(self, env):
         super().reset(env)
-        if n_bowls is None:
-            n_bowls = np.random.randint(1, 4)
-        if n_blocks is None:
-            n_blocks = np.random.randint(1, n_bowls + 5)
+        n_bowls = np.random.randint(1, 4)
+        n_blocks = np.random.randint(1, n_bowls + 1)
 
         all_color_names = self.get_colors()
         selected_color_names = random.sample(all_color_names, 2)
@@ -39,14 +37,11 @@ class PutBlockInBowlUnseenColors(Task):
             p.changeVisualShape(bowl_id, -1, rgbaColor=colors[1] + [1])
             bowl_poses.append(bowl_pose)
 
-        print(f'Number of bowls: {len(bowl_poses)}')
-
         # Add blocks.
         blocks = []
         block_size = (0.04, 0.04, 0.04)
         block_urdf = 'stacking/block.urdf'
         for _ in range(n_blocks):
-            # import pdb; pdb.set_trace()
             block_pose = self.get_random_pose(env, block_size)
             block_id = env.add_object(block_urdf, block_pose)
             p.changeVisualShape(block_id, -1, rgbaColor=colors[0] + [1])
@@ -67,7 +62,7 @@ class PutBlockInBowlUnseenColors(Task):
 
         # Add distractors.
         n_distractors = 0
-        max_distractors = 6 if distractors else 0
+        max_distractors = 6
         while n_distractors < max_distractors:
             is_block = np.random.rand() > 0.5
             urdf = block_urdf if is_block else bowl_urdf
@@ -85,6 +80,7 @@ class PutBlockInBowlUnseenColors(Task):
 
     def get_colors(self):
         return utils.TRAIN_COLORS if self.mode == 'train' else utils.EVAL_COLORS
+
 
 class PutBlockInBowlSeenColors(PutBlockInBowlUnseenColors):
     def __init__(self):

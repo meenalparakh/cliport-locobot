@@ -289,7 +289,7 @@ class LocobotSuction(Gripper):
                 # Handle contact between suction with a rigid object.
                 for point in points:
                     obj_id, contact_link = point[2], point[4]
-                    print(point[2], point[4])
+                    # print(point[2], point[4])
                 if obj_id in self.obj_ids['rigid']:
                     body_pose = self.pb_client.getLinkState(self.locobot_id, self.ee)
                     obj_pose = self.pb_client.getBasePositionAndOrientation(obj_id)

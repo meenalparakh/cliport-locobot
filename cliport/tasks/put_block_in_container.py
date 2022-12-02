@@ -6,7 +6,7 @@ from cliport.tasks.task import Task
 from cliport.utils import utils
 
 import random
-import pybullet as p
+# import pybullet as p
 
 
 class PutBlockInContainerUnseenColors(Task):
@@ -19,7 +19,7 @@ class PutBlockInContainerUnseenColors(Task):
         self.lang_template = "put the {pick} blocks in brown box"
         self.task_completed_desc = "done placing blocks in box."
 
-    def reset(self, env, n_blocks = 1, fixed = True):
+    def reset(self, env, n_blocks=1, fixed=True):
         super().reset(env)
         if n_blocks is None:
             n_blocks = np.random.randint(1, 5)
@@ -31,6 +31,8 @@ class PutBlockInContainerUnseenColors(Task):
         # Add container box.
         zone_size = self.get_random_size(0.05, 0.3, 0.05, 0.3, 0.05, 0.05)
         zone_pose = self.get_random_pose(env, zone_size)
+        
+        container_id = []
         if fixed:
             zone_size = (0.18, 0.18, 0.05)
             pos = (0.35, -0.4, zone_pose[0][2])
@@ -41,7 +43,7 @@ class PutBlockInContainerUnseenColors(Task):
         half = np.float32(zone_size) / 2
         replace = {'DIM': zone_size, 'HALF': half}
         container_urdf = self.fill_template(container_template, replace)
-        env.add_object(container_urdf, zone_pose, 'fixed')
+        container_id.append(env.add_object(container_urdf, zone_pose, 'fixed'))
         if os.path.exists(container_urdf):
             os.remove(container_urdf)
 
@@ -71,11 +73,12 @@ class PutBlockInContainerUnseenColors(Task):
             self.lang_goals.append(self.lang_template.format(pick=selected_color_names[0]))
 
         # Only one mistake allowed.
-        self.max_steps = len(blocks) + 1
+        # self.max_steps = len(blocks) + 1
+        self.max_steps = len(blocks)
 
     def generate_random_poses(self, env, box_pose, box_dims, obj_dim, num_objs = 1):
-        coeffs_x = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.3 * box_dims[0]
-        coeffs_y = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.3 * box_dims[1]
+        coeffs_x = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.20 * box_dims[0]
+        coeffs_y = np.array(random.sample(range(-100, 100, 20), num_objs))/100 * 0.20 * box_dims[1]
         obj_poses = []
         for i in range(num_objs):
 

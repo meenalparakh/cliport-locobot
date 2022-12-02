@@ -3,6 +3,7 @@ import os
 import string
 import random
 import colorsys
+# import pybullet as p
 
 def ang_in_mpi_ppi(angle):
     """
@@ -36,11 +37,12 @@ BLACK = colorsys.hsv_to_rgb(0, 0.75, 0)
 RED = colorsys.hsv_to_rgb(0, 0.75, 0.75)
 BLUE = colorsys.hsv_to_rgb(0.55, 0.75, 0.75)
 GREEN = colorsys.hsv_to_rgb(0.4, 0.75, 0.4)
+YELLOW = [0.8, 0.8, 0.1]
 
 def generate_color(exclude_colors = None):
     if exclude_colors is None:
        return colorsys.hsv_to_rgb(np.random.rand(), 0.75, 0.75)
-    
+
     exclude_colors = [np.array(colorsys.rgb_to_hsv(*color)) for color in exclude_colors]
     found = False
 

@@ -8,11 +8,12 @@ import random
 from cliport import tasks
 from cliport.dataset import RavensDataset
 from cliport.environments.environment import Environment
-
+import pdb
 
 @hydra.main(config_path='./cfg', config_name='data')
 def main(cfg):
     # Initialize environment and task.
+    print('################################################################################')
     env = Environment(
         cfg['assets_root'],
         disp=cfg['disp'],
@@ -28,7 +29,7 @@ def main(cfg):
     # Initialize scripted oracle agent and dataset.
     agent = task.oracle(env, locobot=cfg['locobot'])
     data_path = os.path.join(cfg['data_dir'], "{}-{}".format(cfg['task'], task.mode))
-    dataset = RavensDataset(data_path, cfg, n_demos=0, augment=False)
+    dataset = RavensDataset(data_path, cfg, store=True, n_demos=0, augment=False)
     print(f"Saving to: {data_path}")
     print(f"Mode: {task.mode}")
 
@@ -71,27 +72,32 @@ def main(cfg):
 
         # Rollout expert policy
         for _ in range(task.max_steps):
+            # pdb.set_trace()
+            obs = obs[-env.num_turns:]
             act = agent.act(obs, info)
             lang_goal = info['lang_goal']
             _obs, _reward, _done, _info = env.step(act)
-            if isinstance(_obs, list):
-                episode.append(([obs, *(_obs[:2])],
-                                act,
-                                reward,
-                                [info, *(_info[:2])]))
-            else:
-                episode.append((obs, act, reward, info))
+            for substep in range(len(_obs)):
+                print('Data collection:', _obs[substep]['configs'][3]['position'])
+            # if isinstance(_obs, list):
+            episode.append(([*obs, *(_obs[:-env.num_turns])],
+                            act,
+                            reward,
+                            info))
+            # else:
+            # episode.append((obs, act, reward, info))
 
-            obs = _obs[-1]
+            # print('Step', info[1]['bot_pose'], info[1]['cam_configs'])
+            obs = _obs
             reward = _reward
             done = _done
-            info = _info[-1]
+            info = _info
             total_reward += reward
 
             print(f'Total Reward: {total_reward:.3f} | Done: {done} | Goal: {lang_goal}')
             if done:
                 break
-        episode.append((obs, None, reward, info))
+        episode.append((obs[-env.num_turns:], None, reward, info))
 
         # End video recording
         if record:

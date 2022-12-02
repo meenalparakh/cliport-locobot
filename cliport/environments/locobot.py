@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
 import numpy as np
-import pybullet as p
+# import pybullet as p
 from airobot.utils.common import to_quat
-from airobot.utils.common import to_rot_mat
+from airobot.utils.common import to_rot_mat, rot2quat
 from scipy.spatial.transform import Rotation as R
 
 from airobot.sensor.camera.rgbdcam_pybullet import RGBDCameraPybullet
@@ -13,16 +13,17 @@ from yacs.config import CfgNode as CN
 # from locobot.sim.discrete_env_info import *
 from cliport.environments.discrete_env_info import *
 from cliport.environments.utils.common import ang_in_mpi_ppi
+from cliport.utils.utils import get_transformation_matrix, get_pose_from_transformation
 # import transformations as tf
 import time
 
 def _get_default_camera_cfg():
     _C = CN()
     _C.ZNEAR = 0.01
-    _C.ZFAR = 10
+    _C.ZFAR = 5
     _C.WIDTH = 640
     _C.HEIGHT = 480
-    _C.FOV = 60
+    _C.FOV = 90
     _ROOT_C = CN()
     _ROOT_C.CAM = CN()
     _ROOT_C.CAM.SIM = _C
@@ -38,7 +39,7 @@ class Locobot:
         self.bot = bot
 
         self.wheel_joints = [1, 2]  # Left and right wheels
-        self.wheel_default_forward_vel = 20
+        self.wheel_default_forward_vel = 30
         self.wheel_default_rotate_vel = 20
 
         # self.time_long = 80
@@ -131,7 +132,30 @@ class Locobot:
         cam.set_cam_ext(pos=pos, ori=ori)
         return cam
 
-    def get_camera_config(self):
+
+    def get_locobot_camera_pose(self, bot_frame=False):
+        info = self.env.pb_client.getLinkState(self.bot, self.camera_link)
+        pos = info[4]
+        quat = info[5]
+        pos = np.array(pos)
+        quat = np.array(quat)
+        rot_mat = to_rot_mat(quat)
+        offset_rot_mat = np.dot(rot_mat, self.cam_offset)
+        offset_quat = to_quat(offset_rot_mat)
+
+        if bot_frame:
+            X_WL = get_transformation_matrix(self.get_base_pose())
+            X_WC = get_transformation_matrix((pos, offset_quat))
+            # print(X_WL, X_WC)
+            X_LC = np.linalg.inv(X_WL) @ X_WC
+            pos, offset_quat = get_pose_from_transformation(X_LC)
+             # = X_LC[:3, 3]
+            # offset_quat = rot2quat(X_LC[:3,:3])
+
+        # print(f'Locobot camera pose: {pos}, {offset_quat}')
+        return pos, offset_quat
+
+    def get_camera_config(self, bot_frame=False):
         _root_c = _get_default_camera_cfg()
         width = _root_c.CAM.SIM.WIDTH
         height = _root_c.CAM.SIM.HEIGHT
@@ -144,8 +168,9 @@ class Locobot:
         f = width / (2 * np.tan(fov * np.pi / 360))
         intrinsics = (f, 0., Cu, 0., f, Cv, 0., 0., 1.)
 
+        # print(f'Locobot camera intrinsics: {intrinsics}')
         image_size = (height, width)
-        fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose()
+        fp_cam_pos, fp_cam_ori = self.get_locobot_camera_pose(bot_frame)
         CONFIG = {
             'image_size': image_size,
             'intrinsics': intrinsics,
@@ -198,17 +223,6 @@ class Locobot:
     def get_base_pose(self):
         pos, ori = self.env.pb_client.getBasePositionAndOrientation(self.bot)
         return np.array(pos), np.array(ori)
-
-    def get_locobot_camera_pose(self):
-        info = self.env.pb_client.getLinkState(self.bot, self.camera_link)
-        pos = info[4]
-        quat = info[5]
-        pos = np.array(pos)
-        quat = np.array(quat)
-        rot_mat = to_rot_mat(quat)
-        offset_rot_mat = np.dot(rot_mat, self.cam_offset)
-        offset_quat = to_quat(offset_rot_mat)
-        return pos, offset_quat
 
     def set_locobot_camera_pan_tilt(self, pan, tilt, ignore_physics=True):
         if not ignore_physics:

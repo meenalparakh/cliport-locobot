@@ -70,7 +70,7 @@ class Task():
             _, hmap, obj_mask = self.get_true_image(env)
 
             # Unpack next goal step.
-            objs, matches, targs, replace, rotations, _, _, _ = self.goals[0]
+            objs, matches, targs, replace, rotations, _, params, _ = self.goals[0]
 
             # Match objects to targets without replacement.
             if not replace:
@@ -107,7 +107,7 @@ class Task():
                 else:
                     nn_dists.append(0)
                     nn_targets.append(-1)
-            order = np.argsort(nn_dists)[::-1]
+            order = np.argsort(nn_dists)#[::-1]
 
             # Filter out matched objects.
             order = [i for i in order if nn_dists[i] > 0]
@@ -144,6 +144,10 @@ class Task():
                 pickplace_ori = np.asarray((0, 0, 0, 1))
             pick_pose = (np.asarray(pick_pos), pickplace_ori)
 
+            # Get placing zone
+#             zone_id = params[1][pick_i][2]
+#             place_mask = np.uint8(obj_mask == one_id)
+            
             # Get placing pose.
             targ_pose = targs[nn_targets[pick_i]]  # pylint: disable=undefined-loop-variable
             obj_pose = env.pb_client.getBasePositionAndOrientation(objs[pick_i][0])  # pylint: disable=undefined-loop-variable
@@ -162,6 +166,7 @@ class Task():
 
             place_pose = (np.asarray(place_pose[0]), np.asarray(place_pose[1]))
 
+            center = env.pb_client.getBasePositionAndOrientation(env.workspace)[0]
             return {'pose0': pick_pose, 'pose1': place_pose}
 
         return OracleAgent(act)

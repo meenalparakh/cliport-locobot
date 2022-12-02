@@ -1,5 +1,7 @@
 # Data Generation
 
+name: 'None'
+
 defaults:
   - config
 
@@ -10,11 +12,22 @@ hydra:
 data_dir: ${root_dir}/data  # where to store dataset
 assets_root: ${root_dir}/cliport/environments/assets/
 disp: False  # visualize PyBullet
-shared_memory: False
-task: packing-boxes-pairs-seen-colors
+shared_memory: False #
+task: put-block-in-container-seen-colors
+locobot: True #
 mode: train # 'train' or 'val' or 'test'
 n: 1000 # number of demos to generate
+run_id: 0
+trajs_per_process: 40 #
+multiprocessing: True
 save_data: True  # write episodes to disk
+run_specified: False
+seed: 0
+
+eval:
+  model_ckpt: None 
+  on_train_data: True
+  epochs: 1
 
 dataset:
   type: 'single' # 'single' or 'multi'
@@ -22,6 +35,26 @@ dataset:
   cache: True # load episodes to memory instead of reading from disk
   augment:
     theta_sigma: 60 # rotation sigma in degrees; N(mu = 0, sigma = theta_sigma).
+
+train:
+  # folders
+  exp_folder: exps
+  
+  # task configs
+  task: 'put-block-in-container-seen-colors'
+  # agent: two_stream_full_clip_lingunet_lat_transporter
+  agent: 'locobot'
+  n_demos: 1000
+  # n_steps: 201000 # use 601000 for multi-task models
+
+  # hyper params
+  n_rotations: 36
+  batchnorm: False # important: False because batch_size=1
+  lr: 1e-4
+
+  attn_stream_fusion_type: 'add'
+  trans_stream_fusion_type: 'conv'
+  lang_fusion_type: 'mult'
 
 # record videos (super slow)
 record:

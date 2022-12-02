@@ -3,9 +3,11 @@
 import os
 import pickle
 import warnings
+import glob
 
 import numpy as np
 from torch.utils.data import Dataset
+import torch
 
 from cliport import tasks
 from cliport.tasks import cameras
@@ -13,21 +15,56 @@ from cliport.utils import utils
 import cv2
 import pdb
 import matplotlib.pyplot as plt
+from cliport.utils import utils
 
 # See transporter.py, regression.py, dummy.py, task.py, etc.
-PIXEL_SIZE = 0.003125
-CAMERA_CONFIG = cameras.RealSenseD415.CONFIG
-BOUNDS = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
+# PIXEL_SIZE = 0.003125
+# CAMERA_CONFIG = cameras.RealSenseD415.CONFIG
+# BOUNDS = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
+# NUM_SUBSTEPS = 4
 
 # Names as strings, REVERSE-sorted so longer (more specific) names are first.
 TASK_NAMES = (tasks.names).keys()
 TASK_NAMES = sorted(TASK_NAMES)[::-1]
+FOLDER_PREFIX = 'PROCESS'
+FP_CAM_IDX = 0
+# NUM_EXPLORATION_IMAGES = 2
+MAX_SUBSTEPS = 10
+IMAGE_PAIRINGS = [[0,1], [2], [3,4], [5]]
+# BOUNDS = np.array([[0.05, 1.25], [-0.6, 0.6], [0.10, 0.28]])
+BOUNDS = np.array([[-0.2, 1.40], [-0.8, 0.8], [0.10, 0.28]])
+PIXEL_SIZE = 0.00625
+IMG_SHAPE = (256, 256, 4)
 
+def save_labelled_images_dataloader(batch, batch_idx):
+    sample, _ = batch
+    imgs = sample[0]
+    labels = sample[1]
+    print('Batch length', len(imgs[0]))
+    print('Num substeps (4 expected)', len(imgs))
+    for i in range(len(imgs[0])):
+        for substep in range(len(imgs)):
+            img = imgs[substep][i]
+            label = labels[i][substep]
+            img = img.permute(1, 2, 0)
+            color = np.rint(img[:,:,:3].numpy()*255).astype(np.uint8)
+            p = np.unravel_index(torch.argmax(label), label.shape)
+            height, width = color.shape[:2]
+
+            d0 = max(0, p[1] - 10), max(0, p[0] - 10)
+            d0_ = min(width, p[1] + 10), min(height, p[0] + 10)
+
+            color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+
+            cv2.rectangle(color, d0, d0_, (0, 0, 255), 1)
+            cv2.imwrite(f'/home/gridsan/meenalp/cliport-locobot/images/image_{batch_idx}_{i}_{substep}.jpeg', color)
 
 class RavensDataset(Dataset):
     """A simple image dataset class."""
 
-    def __init__(self, path, cfg, n_demos=0, augment=False):
+    def __init__(self, path, cfg, store,
+                 cam_idx=[0], n_demos=0, augment=False,
+                 track=False, process_num=0, randomize=False):
         """A simple RGB-D image dataset."""
         self._path = path
 
@@ -35,40 +72,93 @@ class RavensDataset(Dataset):
         self.sample_set = []
         self.max_seed = -1
         self.n_episodes = 0
+        self.process_num = process_num
+        self.folder_prefix = FOLDER_PREFIX + str(self.process_num).zfill(5)
         self.images = self.cfg['dataset']['images']
         self.cache = self.cfg['dataset']['cache']
         self.n_demos = n_demos
         self.augment = augment
+        self.randomize = randomize
 
-        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60  # legacy code issue: theta_sigma was newly added
-        self.pix_size = 0.003125
+        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60
+        # legacy code issue: theta_sigma was newly added
+        # self.pix_size = 0.003125
+        # self.in_shape = (320, 256, 6)
+
+        self.pix_size = PIXEL_SIZE
+        self.in_shape = IMG_SHAPE
+        self.cam_idx = cam_idx
+        self.fp_cam_idx = FP_CAM_IDX
+        if not store:
+            self.img_frame = 'fp' # self.cfg['dataset']['img_frame']
+            if self.img_frame == 'fp':
+                self.cam_idx = [self.fp_cam_idx]
+        # self.pix_size = 0.002
         self.depth_scale = 1000.0
-        self.in_shape = (320, 160, 6)
+        # self.in_shape = (320, 160, 6)
+        # self.in_shape = (320, 192, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
-        self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
+        self.bounds = BOUNDS
+        self.crop_size = 40
 
-        # Track existing dataset if it exists.
-        color_path = os.path.join(self._path, 'action')
-        if os.path.exists(color_path):
-            for fname in sorted(os.listdir(color_path)):
-                if '.pkl' in fname:
-                    seed = int(fname[(fname.find('-') + 1):-4])
-                    self.n_episodes += 1
-                    self.max_seed = max(self.max_seed, seed)
+        self.crop_size = 40
+        self.pad_size = int(self.crop_size / 2)
+        self.n_rotations = 4
+        self.rotator = utils.ImageRotator(self.n_rotations)
+        self.padding = np.zeros((3, 2), dtype=int)
+        self.padding[:2, :] = self.pad_size
+        self.kernel_shape = (self.crop_size, self.crop_size, self.in_shape[2])
+
+        # if not hasattr(self, 'output_dim'):
+        #     self.output_dim = 3
+        # if not hasattr(self, 'kernel_dim'):
+        #     self.kernel_dim = 3
 
         self._cache = {}
+
+        if store:
+            path = os.path.join(self._path, self.folder_prefix)
+            os.makedirs(path)
 
         if self.n_demos > 0:
             self.images = self.cfg['dataset']['images']
             self.cache = self.cfg['dataset']['cache']
 
             # Check if there sufficient demos in the dataset
+            episode_paths = sorted(self.get_episode_paths())
+            self.n_episodes = len(episode_paths)
             if self.n_demos > self.n_episodes:
-                raise Exception(f"Requested training on {self.n_demos} demos, but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
+                raise Exception(f"Requested training on {self.n_demos} demos, "
+                f"but only {self.n_episodes} demos exist in the dataset path: {self._path}.")
 
-            episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
-            self.set(episodes)
+            if self.randomize:
+                episodes = np.random.choice(range(self.n_episodes), self.n_demos, False)
+            else:
+                episodes = list(range(self.n_episodes))[:self.n_demos]
+            ###
+            num_steps = self.get_steps_count(episode_paths)
+            self.set(episode_paths, episodes, num_steps)
+            ###
 
+    def get_episode_paths(self):
+        return glob.glob(self._path + "/" + FOLDER_PREFIX + "*/episode*/label_*.pkl")
+
+    def get_steps_count(self, episode_paths):
+        steps = []
+        for epi_path in episode_paths:
+            n = len(pickle.load(open(epi_path, 'rb')))
+            steps.append(n)
+        return steps
+
+    def set(self, episode_paths, episodes, num_steps):
+        """Limit random samples to specific fixed set."""
+        self.episode_paths = episode_paths
+        self.episode_num_steps = num_steps
+        self.sample_set = episodes
+        self.idx_to_episode_step = []
+        for episode_id in self.sample_set:
+            for step in range(self.episode_num_steps[episode_id]-1):
+                self.idx_to_episode_step.append((episode_id, step))
 
     def add(self, seed, episode):
         """Add an episode to the dataset.
@@ -77,322 +167,356 @@ class RavensDataset(Dataset):
           seed: random seed used to initialize the episode.
           episode: list of (obs, act, reward, info) tuples.
         """
-        color, depth, action, reward, info = [], [], [], [], []
-        for obs, act, r, i in episode:
-            if isinstance(obs, list):
-                substep_col = []
-                substep_depth = []
-                substep_info = []
-                for sub_step in range(3):
-                    substep_col.append(obs[sub_step]['color'])
-                    substep_depth.append(obs[sub_step]['depth'])
-                    substep_info.append(i[sub_step])
+        episode_fname = f'episode{self.n_episodes:03d}-{seed}'
+        episode_path = os.path.join(self._path, self.folder_prefix, episode_fname)
+        os.makedirs(episode_path)
 
-                color.append(np.array(substep_col, dtype=np.uint8))
-                depth.append(np.array(substep_depth, dtype=np.float32))
-                info.append(substep_info)
+        color_path = os.path.join(episode_path, 'color')
+        depth_path = os.path.join(episode_path, 'depth')
+        # if not os.path.exists(color_path):
+        os.makedirs(color_path)
+        os.makedirs(depth_path)
+
+        steps_data = []
+        for step in range(len(episode)):
+            obs, act, r, i = episode[step]
+            print('here', act)
+            if step == (len(episode)-1):
+                imgs = self.get_image_wrapper(obs, IMAGE_PAIRINGS[:1])
             else:
-                color.append(np.array([obs['color']], dtype=np.uint8))
-                depth.append(np.array([obs['depth']], dtype=np.float32))
-                info.append(i)
+                imgs = self.get_image_wrapper(obs, IMAGE_PAIRINGS)
+            p0s, p1s = None, None
+            p0_thetas, p1_thetas = None, None
+            perturb_params =  None
 
-            action.append(act)
-            reward.append(r)
+            if act:
+                p0s, p0_thetas, p1s, p1_thetas = self.transform_pick_place(act, obs, IMAGE_PAIRINGS)
 
-        # color = np.uint8(color)
-        # depth = np.float32(depth)
+            steps_data.append((p0s, p0_thetas, p1s, p1_thetas))
 
-        def dump(data, field):
-            field_path = os.path.join(self._path, field)
-            if not os.path.exists(field_path):
-                os.makedirs(field_path)
-            fname = f'{self.n_episodes:06d}-{seed}.pkl'  # -{len(episode):06d}
-            with open(os.path.join(field_path, fname), 'wb') as f:
-                pickle.dump(data, f)
+            for substep in range(len(imgs)):
+                color = imgs[substep][:,:,:3]
+                color_fname = f'S{step}-U{substep}.png'
+                color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(os.path.join(color_path, color_fname), color)
 
-        def dump_image(data, field):
-            episode = f'{self.n_episodes:06d}-{seed}'
-            field_path = os.path.join(self._path, field, episode)
-            img_dims = 3 if field=='color' else 2
-            if not os.path.exists(field_path):
-                os.makedirs(field_path)
-            num_steps = len(data)
-            for step in range(num_steps):
-                for substep in range(data[step].shape[0]):
-                    num_cameras = data[step].shape[1]
-                    for camera in range(num_cameras):
-                        print(f'Step: {step}, Substep: {substep}, Camera:{camera}')
-                        image = data[step][substep][camera]
-                        fname = f'S{step}-U{substep}-C{camera}.png'
-                        if field == 'color':
-                            # image = np.uint8(image)
-                            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                            cv2.imwrite(os.path.join(field_path, fname), image)
-                        elif field == 'depth':
-                            sdepth = image * self.depth_scale
-                            # image = np.float32(image)
-                            # pdb.set_trace()
-                            # print('depth: ', sdepth)
-                            cv2.imwrite(os.path.join(field_path, fname),
-                                        sdepth.astype(np.uint16))
+                depth = imgs[substep][:,:,3]
+                depth_fname = f'S{step}-U{substep}.png'
+                sdepth = depth * self.depth_scale
+                cv2.imwrite(os.path.join(depth_path, depth_fname),
+                            sdepth.astype(np.uint16))
 
-        dump_image(color, 'color')
-        dump_image(depth, 'depth')
-        dump(action, 'action')
-        dump(reward, 'reward')
-        dump(info, 'info')
-        dump({'num_steps': len(color),
-              'num_cameras': len(color[0][0])},
-             'side_info')
+        field_fname = 'label_info.pkl'
+        field_path = os.path.join(episode_path, field_fname)
+        with open(field_path, 'wb') as f:
+            pickle.dump(steps_data, f)
 
         self.n_episodes += 1
         self.max_seed = max(self.max_seed, seed)
 
-    def set(self, episodes):
-        """Limit random samples to specific fixed set."""
-        self.sample_set = episodes
 
-    def load(self, episode_id, images=True, cache=False):
+    def load(self, episode_path, step_i, step_g, images=True, cache=False):
 
-        def load_image_field(episode_id, field, fname):
+        def load_image_field(episode_path, step_i, step_g):
 
-            # path = os.path.join(self._path, 'side_info')
+            color_dir = os.path.join(episode_path, 'color')
+            depth_dir = os.path.join(episode_path, 'depth')
 
-            side_info = load_field(episode_id, 'side_info', fname)
-            # pickle.load(open(os.path.join(path, fname), 'rb'))
-            num_steps = side_info['num_steps']
-            num_cameras = side_info['num_cameras']
-
-            dir = os.path.join(self._path, field, fname[:-4])
-            data = [[]]*num_steps
-            for step in range(num_steps):
-                for substep in range(3):
-                    f_check = f'S{step}-U{substep}-C0.png'
-                    exists = os.path.exists(os.path.join(dir, f_check)):
+            obs = []
+            for step in [step_i, step_g]:
+                # pdb.set_trace()
+                substep_imgs = []
+                for substep in range(MAX_SUBSTEPS):
+                    f_check = f'S{step}-U{substep}.png'
+                    exists = os.path.exists(os.path.join(color_dir, f_check))
                     if not exists:
                         break
-                    data[step].append([])
-                    if self.cfg['dataset']['camera_type'] == 'fp':
-                        cameras = [3]
-                    else:
-                        cameras = range(num_cameras)
-                    for cam in cameras:
-                        f = f'S{step}-U{substep}-C{cam}.png'
-                        print(f'Reading: {f}')
-                        if field == 'depth':
-                            image = cv2.imread(os.path.join(dir, f), cv2.IMREAD_UNCHANGED)
-                            image = image / self.depth_scale
-                        elif field == 'color':
-                            image = cv2.imread(os.path.join(dir, f))
-                            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                            # print(f' inside load: {image}')
-                        data[step][substep].append(image)
-                data[step] = np.array(data[step])
-            # data = np.array(data)
-            print(f'Image data loaded: {field}')
-            [print(data[step].shape) for step in range(num_steps)]
-            return data
 
-        def load_field(episode_id, field, fname):
+                    f = f'S{step}-U{substep}.png'
+                    depth = cv2.imread(os.path.join(depth_dir, f), cv2.IMREAD_UNCHANGED)
+                    depth = depth / self.depth_scale
+                    color = cv2.imread(os.path.join(color_dir, f))
+                    color = cv2.cvtColor(color, cv2.COLOR_BGR2RGB)
+                    depth = depth[..., None]
+                    substep_imgs.append(np.concatenate((color, depth), axis=-1))
 
-            # Check if sample is in cache.
+                obs.append(substep_imgs)
+            return obs
+
+        def load_field(episode_path):
+
+            name = episode_path[episode_path.find(FOLDER_PREFIX):]
             if cache:
-                if episode_id in self._cache:
-                    if field in self._cache[episode_id]:
-                        return self._cache[episode_id][field]
+                if name in self._cache:
+                    if 'label' in self._cache[name]:
+                        return self._cache[name]['label']
                 else:
-                    self._cache[episode_id] = {}
+                    self._cache[name] = {}
 
-            # Load sample from files.
-            path = os.path.join(self._path, field)
-
-            if field == 'color' or field == 'depth':
-                data = load_image_field(episode_id, field, fname)
-            else:
-                data = pickle.load(open(os.path.join(path, fname), 'rb'))
+            fname = 'label_info.pkl'
+            data = pickle.load(open(os.path.join(episode_path, fname), 'rb'))
             if cache:
-                self._cache[episode_id][field] = data
+                self._cache[name]['label'] = data
             return data
 
         # Get filename and random seed used to initialize episode.
         seed = None
-        path = os.path.join(self._path, 'action')
-        for fname in sorted(os.listdir(path)):
-            if f'{episode_id:06d}' in fname:
-                seed = int(fname[(fname.find('-') + 1):-4])
 
-                # Load data.
-                action = load_field(episode_id, 'action', fname)
-                reward = load_field(episode_id, 'reward', fname)
-                info = load_field(episode_id, 'info', fname)
-                color = load_field(episode_id, 'color', fname)
-                depth = load_field(episode_id, 'depth', fname)
+        episode_data = load_field(episode_path)
+        # print('whole episode data', episode_data)
+        num_steps = len(episode_data)
 
-                # Reconstruct episode.
-                episode = []
-                for i in range(len(action)):
-                    obs = {'color': color[i], 'depth': depth[i]} if images else {}
-                    episode.append((obs, action[i], reward[i], info[i]))
-                return episode, seed
+        step_i = (step_i + num_steps)%num_steps
+        step_g = (step_g + num_steps)%num_steps
+
+        p0s, p0_thetas, p1s, p1_thetas = episode_data[step_i]
+        p0s_g, p0_thetas_g, p1s_g, p1_thetas_g = episode_data[step_g]
+        # if p0s is None:
+        #     print('episode path:', episode_path)
+        #     print(step_i, step_g)
+        # print('sample', p0s, p0_thetas, p1s, p1_thetas)
+        # print('goal', p0s_g, p0_thetas_g, p1s_g, p1_thetas_g)
+
+        imgs, imgs_g = load_image_field(episode_path, step_i, step_g)
+
+        ## None is for language instructions
+        i = (imgs, (p0s, p0_thetas), (p1s, p1_thetas), None)
+        g = (imgs_g, (p0s_g, p0_thetas_g), (p1s_g, p1_thetas_g), None)
+
+        return i, g
 
     def get_image(self, obs, cam_config=None):
         """Stack color and height images image."""
-
-        if cam_config is None:
-            cam_config = self.cam_config
+        #
+        # if cam_config is None:
+        #     cam_config = self.cam_config
 
         # Get color and height maps from RGB-D images.
         cmap, hmap = utils.get_fused_heightmap(
             obs, cam_config, self.bounds, self.pix_size)
+
+        kernel = np.ones((2,2), np.uint8)
+        cmap = cv2.dilate(cmap, kernel, iterations=1)
+        hmap = cv2.dilate(hmap, kernel, iterations=1)
+
         img = np.concatenate((cmap,
-                              hmap[Ellipsis, None],
-                              hmap[Ellipsis, None],
+                              # hmap[Ellipsis, None],
+                              # hmap[Ellipsis, None],
                               hmap[Ellipsis, None]), axis=2)
         assert img.shape == self.in_shape, img.shape
         return img
 
-    def get_image_wrapper(self, obs, info):
+    def get_image_wrapper(self, obs, pairings):
+
         """Stack color and height images image."""
-
-        # if self.use_goal_image:
-        #   colormap_g, heightmap_g = utils.get_fused_heightmap(goal, configs)
-        #   goal_image = self.concatenate_c_h(colormap_g, heightmap_g)
-        #   input_image = np.concatenate((input_image, goal_image), axis=2)
-        #   assert input_image.shape[2] == 12, input_image.shape
-
-        assert ((obs.shape[0] == 3) or (obs.shape[0] == 1))
-        print('inside image_wrapper observation shape', obs.shape)
         images = []
-        for substep in range(obs.shape[0]):
-            color = obs['color'][substep]
-            depth = obs['depth'][substep]
-            substep_obs = {'color': color, 'depth': depth}
-            cam_configs = info[substep]['cam_configs']
-            if self.camera_type == 'fp':
-                cam_configs = cam_configs[3:]
+
+        for higher_substeps in range(len(pairings)):
+            # print('Info:', obs[substep]['configs'][0]['position'])
+            cam_configs = []
+            substep_colors = []
+            substep_depths = []
+            for lower_substeps in pairings[higher_substeps]:
+                # pdb.set_trace()
+                # print("inside wrapper: ", higher_substeps, lower_substeps)
+                substep_colors.extend(obs[lower_substeps]['image']['color'])
+                substep_depths.extend(obs[lower_substeps]['image']['depth'])
+                # for idx in self.cam_idx:
+                config = obs[lower_substeps]['configs'][0]
+                pos, ori = config['position'], config['rotation']
+                # print(f'Substep: {substep}, Camera {idx}: position: {pos}, rotation: {ori}')
+                # if (idx == self.fp_cam_idx) and (self.img_frame == 'fp'):
+                bot_pose = obs[lower_substeps]['bot_pose']
+                X_WL = utils.get_transformation_matrix(bot_pose)
+                X_WC = utils.get_transformation_matrix((config['position'],
+                                                        config['rotation']))
+                X_LC = np.linalg.inv(X_WL) @ X_WC
+                pos, ori = utils.get_pose_from_transformation(X_LC)
+                config['position'], config['rotation'] = pos, ori
+
+                cam_configs.append(config)
+
+            substep_obs = {'color': substep_colors, 'depth': substep_depths}
             img = self.get_image(substep_obs, cam_configs)
             images.append(img)
-
-        if obs.shape[0] == 1:
-            images = images*3
-
         return images
 
-    def perturb_wrapper(self, imgs, pts_lst, theta_sigma=self.aug_theta_sigma):
+    def transform_pick_place(self, act, obs, pairings):
+        pick_pose= act['pose0']
+        place_pose = act['pose1']
+#         center = [*act['center'], 0.2]
+        X_W_pick = utils.get_transformation_matrix(pick_pose)
+        X_W_place = utils.get_transformation_matrix(place_pose)
 
-        for images
+        acts = []
+        p0s, p0_thetas, p1s, p1_thetas, centers = [], [], [], [], []
+        for i in range(len(pairings)):
+            substep_obs = obs[IMAGE_PAIRINGS[i][0]]
+            # if self.img_frame == 'fp':
+            X_WL = utils.get_transformation_matrix(substep_obs['bot_pose'])
+            X_LW = np.linalg.inv(X_WL)
+            X_L_pick = X_LW @ X_W_pick
+            X_L_place = X_LW @ X_W_place
+            p0_xyz, p0_xyzw = utils.get_pose_from_transformation(X_L_pick)
+            p1_xyz, p1_xyzw = utils.get_pose_from_transformation(X_L_place)
+                # center_xyz = (X_LW[:3,:3] @ np.array(center).reshape((3,1)))[:, 0] \
+                #                 + X_LW[:3, 3]
+            #
+            # else:
+            #     p0_xyz, p0_xyzw = pick_pose
+            #     p1_xyz, p1_xyzw = place_pose
+                # center_xyz = center
 
-        img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1],
-                                            theta_sigma=self.aug_theta_sigma)
-
-    def process_sample(self, datum, augment=True):
-        # Get training labels from data sample.
-        (obs, act, _, info) = datum
-        # cam_configs = info['cam_configs']
-        # if self.camera_type == 'fp':
-        #     cam_configs = cam_configs[3:]
-        # img = self.get_image(obs, cam_config=cam_configs)
-        img = self.get_image_wrapper(obs, info)
-
-        p0, p1 = None, None
-        p0_theta, p1_theta = None, None
-        perturb_params =  None
-
-        if act:
-            p0_xyz, p0_xyzw = act['pose0']
-            p1_xyz, p1_xyzw = act['pose1']
+            # print(f'    Substep: {i}, pick: {p0_xyz}, place: {p1_xyz}')
             p0 = utils.xyz_to_pix(p0_xyz, self.bounds, self.pix_size)
             p0_theta = -np.float32(utils.quatXYZW_to_eulerXYZ(p0_xyzw)[2])
             p1 = utils.xyz_to_pix(p1_xyz, self.bounds, self.pix_size)
             p1_theta = -np.float32(utils.quatXYZW_to_eulerXYZ(p1_xyzw)[2])
             p1_theta = p1_theta - p0_theta
             p0_theta = 0
+            # center = utils.xyz_to_pix(center_xyz, self.bounds, self.pix_size)
 
-        # Data augmentation.
-        plt.imsave('/Users/meenalp/Desktop/actual_image.png', img[:,:,:3]/255.0)
-        plt.imsave('/Users/meenalp/Desktop/actual_himage.png', img[:,:,3])
+            p0s.append(p0); p0_thetas.append(p0_theta)
+            p1s.append(p1); p1_thetas.append(p1_theta)
+            # centers.append(center)
 
-        if augment:
-            img, _, (p0, p1), perturb_params = utils.perturb(img, [p0, p1],
-                                                theta_sigma=self.aug_theta_sigma)
+        return p0s, p0_thetas, p1s, p1_thetas #, centers
 
-        plt.imsave('/Users/meenalp/Desktop/augment_image.png', img[:,:,:3]/255.0)
-        plt.imsave('/Users/meenalp/Desktop/augment_himage.png', img[:,:,3])
+    def perturb_wrapper(self, input_sample):
+        imgs, (p0s, p0_thetas), (p1s, p1_thetas), _ = input_sample
 
-        sample = {
-            'img': img,
-            'p0': p0, 'p0_theta': p0_theta,
-            'p1': p1, 'p1_theta': p1_theta,
-            'perturb_params': perturb_params
-        }
+        img0, _, (p0_0, p1_0), perturb_params = utils.perturb(imgs[0], [p0s[0], p1s[0]])
+        img2, _, (p0_2, p1_2), perturb_params = utils.perturb(imgs[2], [p0s[2], p1s[2]])
+        img3, _, (p0_3, p1_3), perturb_params = utils.perturb(imgs[3], [p0s[3], p1s[3]])
 
-        # Add language goal if available.
-        if 'lang_goal' not in info:
-            warnings.warn("No language goal. Defaulting to 'task completed.'")
+        imgs_new = [img0, imgs[1], img2, img3]
+        p0s_new = [p0_0.copy(), np.array(p0s[1]), p0_2.copy(), p0_3.copy()]
+        p1s_new = [p1_0.copy(), np.array(p1s[1]), p1_2.copy(), p1_3.copy()]
 
-        if info and 'lang_goal' in info:
-            sample['lang_goal'] = info['lang_goal']
-        else:
-            sample['lang_goal'] = "task completed."
+#         p0s_new = [p0_0.copy(), np.array(p0s[1]), p0_2.copy(), np.array(p0s[3])]
+#         p1s_new = [p1_0.copy(), np.array(p1s[1]), p1_2.copy(), np.array(p1s[3])]
+#         print(img0.shape, p0s_new, p1s_new)
 
-        return sample
+        return imgs_new, (p0s_new, p0_thetas), (p1s_new, p1_thetas), None
 
-    def process_goal(self, goal, perturb_params):
-        # Get goal sample.
-        (obs, act, _, info) = goal
-        # cam_configs = info['cam_configs']
-        # img = self.get_image(obs, cam_config=cam_configs)
-        img = self.get_image_wrapper(obs, info)
+    def preprocess_sample(self, input_sample):
 
-        p0, p1 = None, None
-        p0_theta, p1_theta = None, None
+        def get_crops(img, pivot):
+            margin = self.pad_size
 
-        # Data augmentation with specific params.
-        if perturb_params:
-            img = utils.apply_perturbation(img, perturb_params)
+            padded_image = torch.nn.ZeroPad2d(margin)(img)
+            pv = np.array(pivot) + margin
+            # new_img = img.permute(2, 0, 1)
+            new_img = padded_image[None, ...]
+            crop = new_img.repeat(self.n_rotations, 1, 1, 1)
+            crop = self.rotator(crop, pivot=pv)
 
-        sample = {
-            'img': img,
-            'p0': p0, 'p0_theta': p0_theta,
-            'p1': p1, 'p1_theta': p1_theta,
-            'perturb_params': perturb_params
-        }
+            crop = torch.cat(crop, dim=0)
+            dims = (pv - margin), (pv + margin)
+            crop = crop[:,:,dims[0][0]:dims[1][0], dims[0][1]:dims[1][1]]
+            # crop = crop.permute(0, 2, 3, 1)
+            return crop
 
-        # Add language goal if available.
-        if 'lang_goal' not in info:
-            warnings.warn("No language goal. Defaulting to 'task completed.'")
+        def within_image_bounds(p):
+            h, w = p
+            H, W = self.in_shape[:2]
+            if (h>0) and (w>0) and (h<H) and (w<W):
+                return True
+            return False
 
-        if info and 'lang_goal' in info:
-            sample['lang_goal'] = info['lang_goal']
-        else:
-            sample['lang_goal'] = "task completed."
+        img, (p0, p0_theta), (p1, p1_theta), _ = input_sample
+        for substep in range(len(img)):
+            img[substep][:,:,:3] = img[substep][:,:,:3]/255.0
+            img[substep] = torch.tensor(img[substep]).float().permute(2, 0, 1)
 
-        return sample
+        crops = get_crops(img[1], p0[1])
+        img_dims = self.in_shape[:2]
+        labels = torch.zeros((4, *img_dims), dtype=torch.float32)
+#         labels = torch.zeros((4,), dtype=torch.long)
+
+        for i in range(2):
+            p = p0[i]
+            if within_image_bounds(p):
+                r, c = p
+            else:
+#                 print('Warning: Pick point not in the image.')
+#                 print(f'Image shape: {img[i].shape}')
+#                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_pick.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
+#                 assert False
+                r = max(min(p[0], img_dims[0]-1), 0)
+                c = max(min(p[1], img_dims[1]-1), 0)
+            labels[i, r, c] = 1.0
+#             labels[i] = r*img_dims[1]+c
+
+#             sigma = 5.0
+#             margin = 1
+#             for row in range(r-margin, r+margin+1):
+#                 for col in range(c-margin, c+margin+1):
+#                     if not within_image_bounds((row, col)):
+#                         continue
+#                     d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
+#                     labels[i, row, col] = np.exp(-d_sq)
+#             labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
+
+        for i in range(2, 4):
+            p = p1[i]
+            if within_image_bounds(p):
+                r, c = p
+            else:
+#                 print('Warning: Place point not in the image.')
+#                 print(f'Image shape: {img[i].shape}')
+
+#                 plt.imsave('/home/gridsan/meenalp/cliport-locobot/no_place.jpeg',  img[i].permute(1,2,0)[:,:,:3].numpy())
+#                 assert False
+                r = max(min(p[0], img_dims[0]-1), 0)
+                c = max(min(p[1], img_dims[1]-1), 0)
+            labels[i, r, c] = 1.0
+#             labels[i] = r*img_dims[1]+c
+
+#             sigma = 5.0
+#             margin = 5
+#             for row in range(r-margin, r+margin+1):
+#                 for col in range(c-margin, c+margin+1):
+#                     if not within_image_bounds((row, col)):
+#                         continue
+#                     d_sq = ((row-r)**2 + (col-c)**2)/sigma**2
+#                     labels[i, row, col] = np.exp(-d_sq)
+#             labels[i,:,:] = labels[i,:,:]/torch.sum(labels[i,:,:])
+
+        # img = img.permute(2, 0, 1)
+        return img, labels, crops, (p0, p0_theta, p1, p1_theta)
+
+    def preprocess_goal(self, input_goal):
+        img, _, _, _ = input_goal
+        for substep in range(len(img)):
+            img[substep][:,:,:3] = img[substep][:,:,:3]/255.0
+            img[substep] = torch.tensor(img[substep]).float().permute(2, 0, 1)
+
+        return img
 
     def __len__(self):
-        return len(self.sample_set)
+        return len(self.idx_to_episode_step)
 
     def __getitem__(self, idx):
-        # Choose random episode.
-        if len(self.sample_set) > 0:
-            episode_id = np.random.choice(self.sample_set)
-        else:
-            episode_id = np.random.choice(range(self.n_episodes))
-        episode, _ = self.load(episode_id, self.images, self.cache)
+        episode_id, step_id = self.idx_to_episode_step[idx]
+        episode_path_full = self.episode_paths[episode_id]
+        episode_path = episode_path_full[:episode_path_full.find('label')]
+        # print('Episode path:', episode_path)
 
         # Is the task sequential like stack-block-pyramid-seq?
         is_sequential_task = '-seq' in self._path.split("/")[-1]
 
         # Return random observation action pair (and goal) from episode.
-        i = np.random.choice(range(len(episode)-1))
-        g = i+1 if is_sequential_task else -1
-        sample, goal = episode[i], episode[g]
+        step_i = step_id
+        step_g = step_i+1 if is_sequential_task else -1
 
-        # Process sample.
-        sample = self.process_sample(sample, augment=self.augment)
-        goal = self.process_goal(goal, perturb_params=sample['perturb_params'])
+        sample, goal = self.load(episode_path, step_i, step_g,
+                                      self.images, self.cache)
 
-        return sample, goal
+        if self.augment:
+            sample = self.perturb_wrapper(sample)
+
+        return self.preprocess_sample(sample), self.preprocess_goal(goal)
 
 
 class RavensMultiTaskDataset(RavensDataset):
@@ -528,7 +652,8 @@ class RavensMultiTaskDataset(RavensDataset):
         'multi-language-conditioned': {
             'train': [
                 'align-rope',
-                'assembling-kits-seq-unseen-colors', # unseen here refers to training only seen splits to be consitent with single-task setting
+                'assembling-kits-seq-unseen-colors',
+                # unseen here refers to training only seen splits to be consitent with single-task setting
                 'packing-boxes-pairs-unseen-colors',
                 'packing-shapes',
                 'packing-unseen-google-objects-seq',
@@ -816,11 +941,13 @@ class RavensMultiTaskDataset(RavensDataset):
         self.n_demos = n_demos
         self.augment = augment
 
-        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60  # legacy code issue: theta_sigma was newly added
+        self.aug_theta_sigma = self.cfg['dataset']['augment']['theta_sigma'] if 'augment' in self.cfg['dataset'] else 60
+        # legacy code issue: theta_sigma was newly added
         self.pix_size = 0.003125
         self.in_shape = (320, 160, 6)
         self.cam_config = cameras.RealSenseD415.CONFIG
-        self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
+        # self.bounds = np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]])
+        self.bounds = np.array([[0.25, 1.25], [-0.5, 0.5], [0, 0.28]])
 
         self.n_episodes = {}
         episodes = {}

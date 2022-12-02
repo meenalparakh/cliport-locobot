@@ -116,7 +116,7 @@ class ResNet43_8s(nn.Module):
         return layers
 
     def forward(self, x):
-        x = self.preprocess(x, dist='transporter')
+        # x = self.preprocess(x, dist='transporter')
 
         out = self.layers(x)
         return out
